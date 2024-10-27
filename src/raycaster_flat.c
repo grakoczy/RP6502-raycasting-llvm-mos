@@ -15,18 +15,18 @@
 #define mapHeight 24
 #define SCREEN_WIDTH 240 
 #define SCREEN_HEIGHT 124 
-#define STEP 8
+#define STEP 4
 
 float posX = 22, posY = 12;  //x and y start position
-float dirX = -1, dirY = 0; //initial direction vector
+float dirX = -0.36, dirY = -0.932; //initial direction vector
 float planeX = 0, planeY = 0.66; //the 2d raycaster version of camera plane
 float moveSpeed = 0.3; //the constant value is in squares/second
 float sin_r = 0.09983341664; // precomputed value of sin(0.1 rad)
 float cos_r = 0.99500416527;
 
 
-int16_t w = SCREEN_WIDTH;
-int16_t h = SCREEN_HEIGHT;
+int16_t w = SCREEN_WIDTH / 2;
+int16_t h = SCREEN_HEIGHT / 2; 
 
 // for double buffering
 uint16_t buffers[2];
@@ -176,13 +176,16 @@ void raycast(uint16_t buffer)
       else          perpWallDist = (sideDistY - deltaDistY);
 
       //Calculate height of line to draw on screen
-      int16_t lineHeight = (int)(h / perpWallDist);
+      int16_t lineHeight = (int16_t)(h / perpWallDist);
 
       //calculate lowest and highest pixel to fill in current stripe
       int16_t drawStart = -lineHeight / 2 + h / 2;
       if(drawStart < 0) drawStart = 0;
-      int16_t drawEnd = lineHeight / 2 + h / 2;
+      // int16_t drawEnd = lineHeight / 2 + h / 2;
+      int16_t drawEnd = lineHeight;
       if(drawEnd >= h) drawEnd = h - 1;
+
+      // printf("lineHeight: %i, drawStart: %i, drawEnd: %i\n", lineHeight, drawStart, drawEnd);
 
       // //choose wall color
       // ColorRGBA color;
@@ -219,7 +222,7 @@ void raycast(uint16_t buffer)
           break; //white
         case 5: 
           if (side == 1) {
-            color == 3;
+            color = 3;
           } else {
             color = YELLOW;
           } 
@@ -233,13 +236,15 @@ void raycast(uint16_t buffer)
       // verLine(x, drawStart, drawEnd, color);
 
       // Draw walls (this part also needs your graphics library for drawing)
-      uint16_t x1 = x;
-      uint16_t y1 = drawStart;
-      uint16_t x2 = STEP;
-      uint16_t y2 = drawEnd;
-      fill_rect2buffer(color, x1, y1, x2, y2, buffer);
-      // draw_rect2buffer(color, x1, y1, x2, y2, buffer);
-      // draw_vline2buffer(color, x, drawStart, drawEnd, buffer);
+      uint16_t x1 = x + w / 2;
+      uint16_t y1 = drawStart + h / 2;
+      uint16_t width = STEP;
+      uint16_t height = drawEnd;
+
+      draw_rect2buffer(DARK_GRAY, w / 2, h / 2, w, h, buffer);
+      // fill_rect2buffer(color, x1, y1, width, height, buffer);
+      // draw_rect2buffer(color, x1, y1, width, height, buffer);
+      draw_vline2buffer(color, x1, y1, drawEnd, buffer);
 
       // HPEN hPen = CreatePen(PS_SOLID, 2, color);  // Yellow color
       // HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);  
@@ -250,17 +255,8 @@ void raycast(uint16_t buffer)
       // SelectObject(hdc, hOldPen);
       // DeleteObject(hPen);
     }
-    // //timing for input and FPS counter
-    // oldTime = time;
-    // time = getTicks();
-    // float frameTime = (time - oldTime) / 1000.0; //frameTime is the time this frame has taken, in seconds
-    // print(1.0 / frameTime); //FPS counter
-    // redraw();
-    // cls();
+    printf("raycasting finished\n");
 
-    // //speed modifiers
-    // moveSpeed = delta_time * 5.0; //the constant value is in squares/second
-    
 }
 
 void single_raycast(uint16_t buffer, int16_t x)
@@ -396,8 +392,8 @@ void single_raycast(uint16_t buffer, int16_t x)
 
 int16_t main() {
     bool handled_key = false;
-    bool paused = true;
-    bool show_buffers_indicators = true;
+    bool paused = false;
+    bool show_buffers_indicators = false;
     uint8_t mode = 0;
     uint8_t i = 0;
 
@@ -433,11 +429,13 @@ int16_t main() {
     // }
     // erase_canvas();
 
-    set_cursor(10, 110);
-    draw_string2buffer("Press SPACE to start/stop", buffers[active_buffer]);
+    // set_cursor(10, 110);
+    // draw_string2buffer("Press SPACE to start/stop", buffers[active_buffer]);
     // draw_string("Press SPACE to start/stop");
 
     // draw_map(buffers[!active_buffer]);
+
+    raycast(buffers[active_buffer]);
     
 
     while (true) {
@@ -515,10 +513,13 @@ int16_t main() {
                 }
                 handled_key = true;
 
+                // printf("dirX: %i, dirY: %i\n", (int)(dirX*1000), (int)(dirY * 1000));
+
                 if (!paused) {
 
                     // draw on inactive buffer
                     erase_buffer(buffers[!active_buffer]);
+                    // draw_rect2buffer(BLACK, w / 2, h / 2, w, h, buffers[!active_buffer]);
                     if(show_buffers_indicators){
                         draw_circle2buffer(WHITE, (active_buffer ? SCREEN_WIDTH - 20 : 20), 20, 8, buffers[!active_buffer]);
                         set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
