@@ -15,7 +15,7 @@
 #define mapHeight 24
 #define SCREEN_WIDTH 240 
 #define SCREEN_HEIGHT 124 
-#define STEP 20
+#define STEP 8
 
 float posX = 22, posY = 12;  //x and y start position
 float dirX = -1, dirY = 0; //initial direction vector
@@ -25,8 +25,8 @@ float sin_r = 0.09983341664; // precomputed value of sin(0.1 rad)
 float cos_r = 0.99500416527;
 
 
-int w = SCREEN_WIDTH;
-int h = SCREEN_HEIGHT;
+int16_t w = SCREEN_WIDTH;
+int16_t h = SCREEN_HEIGHT;
 
 // for double buffering
 uint16_t buffers[2];
@@ -47,7 +47,7 @@ uint8_t keystates[KEYBOARD_BYTES] = {0};
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
 
 
-int worldMap[mapWidth][mapHeight]=
+int16_t worldMap[mapWidth][mapHeight]=
 {
   {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
   {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
@@ -88,7 +88,7 @@ float f_abs(float value) {
 
 void raycast(uint16_t buffer)
 {
-    for(int x = 0; x < w; x += STEP)
+    for(int16_t x = 0; x < w; x += STEP)
     {
       //calculate ray position and direction
       float cameraX = 2 * x / (float)w - 1; //x-coordinate in camera space
@@ -97,8 +97,8 @@ void raycast(uint16_t buffer)
 
       // printf("x: %i, cameraX: %f\n", x, cameraX);
       //which box of the map we're in
-      int mapX = (int)posX;
-      int mapY = (int)posY;
+      int16_t mapX = (int16_t)posX;
+      int16_t mapY = (int16_t)posY;
 
       //length of ray from current position to next x or y-side
       float sideDistX;
@@ -114,18 +114,18 @@ void raycast(uint16_t buffer)
       //ratio between deltaDistX and deltaDistY matters, due to the way the DDA
       //stepping further below works. So the values can be computed as below.
       // Division through zero is prevented, even though technically that's not
-      // needed in C++ with IEEE 754 floating point values.
+      // needed in C++ with IEEE 754 floating point16_t values.
       float deltaDistX = (rayDirX == 0) ? 1e30 : f_abs(1 / rayDirX);
       float deltaDistY = (rayDirY == 0) ? 1e30 : f_abs(1 / rayDirY);
 
       float perpWallDist;
 
       //what direction to step in x or y-direction (either +1 or -1)
-      int stepX;
-      int stepY;
+      int8_t stepX;
+      int8_t stepY;
 
-      int hit = 0; //was there a wall hit?
-      int side; //was a NS or a EW wall hit?
+      int8_t hit = 0; //was there a wall hit?
+      int8_t side; //was a NS or a EW wall hit?
       //calculate step and initial sideDist
       if(rayDirX < 0)
       {
@@ -166,8 +166,8 @@ void raycast(uint16_t buffer)
         //Check if ray has hit a wall
         if(worldMap[mapX][mapY] > 0) hit = 1;
       }
-      //Calculate distance projected on camera direction. This is the shortest distance from the point where the wall is
-      //hit to the camera plane. Euclidean to center camera point would give fisheye effect!
+      //Calculate distance projected on camera direction. This is the shortest distance from the point16_t where the wall is
+      //hit to the camera plane. Euclidean to center camera point16_t would give fisheye effect!
       //This can be computed as (mapX - posX + (1 - stepX) / 2) / rayDirX for side == 0, or same formula with Y
       //for size == 1, but can be simplified to the code below thanks to how sideDist and deltaDist are computed:
       //because they were left scaled to |rayDir|. sideDist is the entire length of the ray above after the multiple
@@ -176,12 +176,12 @@ void raycast(uint16_t buffer)
       else          perpWallDist = (sideDistY - deltaDistY);
 
       //Calculate height of line to draw on screen
-      int lineHeight = (int)(h / perpWallDist);
+      int16_t lineHeight = (int)(h / perpWallDist);
 
       //calculate lowest and highest pixel to fill in current stripe
-      int drawStart = -lineHeight / 2 + h / 2;
+      int16_t drawStart = -lineHeight / 2 + h / 2;
       if(drawStart < 0) drawStart = 0;
-      int drawEnd = lineHeight / 2 + h / 2;
+      int16_t drawEnd = lineHeight / 2 + h / 2;
       if(drawEnd >= h) drawEnd = h - 1;
 
       // //choose wall color
@@ -189,11 +189,41 @@ void raycast(uint16_t buffer)
       uint16_t color = WHITE;
       switch(worldMap[mapX][mapY])
       {
-        case 1:  color = RED;    break; //red
-        case 2:  color = GREEN;  break; //green
-        case 3:  color = BLUE;   break; //blue
-        case 4:  color = WHITE;  break; //white
-        default: color = YELLOW; break; //yellow
+        case 1:  
+          if (side == 1){ 
+            color = DARK_RED; 
+          } else {
+            color = RED;
+          }
+          break; //red
+        case 2:
+          if(side == 1) {
+            color = DARK_GREEN;
+          } else { 
+            color = GREEN;  
+          }
+          break; //green
+        case 3:
+          if (side == 1) {
+            color = DARK_BLUE;
+          } else { 
+            color = BLUE;
+          }   
+          break; //blue
+        case 4: 
+          if (side == 1) {
+            color = LIGHT_GRAY;
+          } else {
+            color = WHITE;
+          }
+          break; //white
+        case 5: 
+          if (side == 1) {
+            color == 3;
+          } else {
+            color = YELLOW;
+          } 
+          break; //yellow
       }
 
       // //give x and y sides different brightness
@@ -203,12 +233,13 @@ void raycast(uint16_t buffer)
       // verLine(x, drawStart, drawEnd, color);
 
       // Draw walls (this part also needs your graphics library for drawing)
-      int x1 = x;
-      int y1 = drawStart;
-      int x2 = x+STEP;
-      int y2 = drawEnd;
-      // fill_rect2buffer(color, x1, y1, x2, y2, buffer);
-      draw_vline2buffer(color, x, drawStart, drawEnd, buffer);
+      uint16_t x1 = x;
+      uint16_t y1 = drawStart;
+      uint16_t x2 = STEP;
+      uint16_t y2 = drawEnd;
+      fill_rect2buffer(color, x1, y1, x2, y2, buffer);
+      // draw_rect2buffer(color, x1, y1, x2, y2, buffer);
+      // draw_vline2buffer(color, x, drawStart, drawEnd, buffer);
 
       // HPEN hPen = CreatePen(PS_SOLID, 2, color);  // Yellow color
       // HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);  
@@ -232,7 +263,7 @@ void raycast(uint16_t buffer)
     
 }
 
-void single_raycast(uint16_t buffer, int x)
+void single_raycast(uint16_t buffer, int16_t x)
 {
     
       //calculate ray position and direction
@@ -242,8 +273,8 @@ void single_raycast(uint16_t buffer, int x)
 
       printf("x: %i, cameraX: %f\n", x, cameraX);
       //which box of the map we're in
-      int mapX = (int)posX;
-      int mapY = (int)posY;
+      int16_t mapX = (int)posX;
+      int16_t mapY = (int)posY;
 
       //length of ray from current position to next x or y-side
       float sideDistX;
@@ -259,18 +290,18 @@ void single_raycast(uint16_t buffer, int x)
       //ratio between deltaDistX and deltaDistY matters, due to the way the DDA
       //stepping further below works. So the values can be computed as below.
       // Division through zero is prevented, even though technically that's not
-      // needed in C++ with IEEE 754 floating point values.
+      // needed in C++ with IEEE 754 floating point16_t values.
       float deltaDistX = (rayDirX == 0) ? 1e30 : f_abs(1 / rayDirX);
       float deltaDistY = (rayDirY == 0) ? 1e30 : f_abs(1 / rayDirY);
 
       float perpWallDist;
 
       //what direction to step in x or y-direction (either +1 or -1)
-      int stepX;
-      int stepY;
+      int16_t stepX;
+      int16_t stepY;
 
-      int hit = 0; //was there a wall hit?
-      int side; //was a NS or a EW wall hit?
+      int16_t hit = 0; //was there a wall hit?
+      int16_t side; //was a NS or a EW wall hit?
       //calculate step and initial sideDist
       if(rayDirX < 0)
       {
@@ -311,8 +342,8 @@ void single_raycast(uint16_t buffer, int x)
         //Check if ray has hit a wall
         if(worldMap[mapX][mapY] > 0) hit = 1;
       }
-      //Calculate distance projected on camera direction. This is the shortest distance from the point where the wall is
-      //hit to the camera plane. Euclidean to center camera point would give fisheye effect!
+      //Calculate distance projected on camera direction. This is the shortest distance from the point16_t where the wall is
+      //hit to the camera plane. Euclidean to center camera point16_t would give fisheye effect!
       //This can be computed as (mapX - posX + (1 - stepX) / 2) / rayDirX for side == 0, or same formula with Y
       //for size == 1, but can be simplified to the code below thanks to how sideDist and deltaDist are computed:
       //because they were left scaled to |rayDir|. sideDist is the entire length of the ray above after the multiple
@@ -321,12 +352,12 @@ void single_raycast(uint16_t buffer, int x)
       else          perpWallDist = (sideDistY - deltaDistY);
 
       //Calculate height of line to draw on screen
-      int lineHeight = (int)(h / perpWallDist);
+      int16_t lineHeight = (int)(h / perpWallDist);
 
       //calculate lowest and highest pixel to fill in current stripe
-      int drawStart = -lineHeight / 2 + h / 2;
+      int16_t drawStart = -lineHeight / 2 + h / 2;
       if(drawStart < 0) drawStart = 0;
-      int drawEnd = lineHeight / 2 + h / 2;
+      int16_t drawEnd = lineHeight / 2 + h / 2;
       if(drawEnd >= h) drawEnd = h - 1;
 
       // //choose wall color
@@ -334,8 +365,20 @@ void single_raycast(uint16_t buffer, int x)
       uint16_t color = WHITE;
       switch(worldMap[mapX][mapY])
       {
-        case 1:  color = RED;    break; //red
-        case 2:  color = GREEN;  break; //green
+        case 1:  
+          if (side == 1){ 
+            color = DARK_RED; 
+          } else {
+            color = RED;
+          }
+          break; //red
+        case 2:
+          if(side == 1) {
+            color = DARK_GREEN;
+          } else { 
+            color = GREEN;  
+          }
+          break; //green
         case 3:  color = BLUE;   break; //blue
         case 4:  color = WHITE;  break; //white
         default: color = YELLOW; break; //yellow
@@ -350,7 +393,8 @@ void single_raycast(uint16_t buffer, int x)
     
 }
 
-int main() {
+
+int16_t main() {
     bool handled_key = false;
     bool paused = true;
     bool show_buffers_indicators = true;
@@ -384,7 +428,7 @@ int main() {
     // draw_string2buffer("Precomputing sine and cosine values...", buffers[active_buffer]);
     // precompute_sin_cos();
 
-    // for (int i = 0; i < 20; i++) {
+    // for (int16_t i = 0; i < 20; i++) {
     //     printf("i: %i, sin: %f, cos: %f\n", i, sine_values[i], cosine_values[i]);
     // }
     // erase_canvas();
@@ -402,37 +446,7 @@ int main() {
 
         // draw_player();
 
-        if (!paused) {
-
-            // draw on inactive buffer
-            erase_buffer(buffers[!active_buffer]);
-            if(show_buffers_indicators){
-                draw_circle2buffer(WHITE, (active_buffer ? SCREEN_WIDTH - 20 : 20), 20, 8, buffers[!active_buffer]);
-                set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
-                draw_string2buffer((active_buffer ? "0" : "1"), buffers[!active_buffer]);
-            }
-            // draw_map(buffers[!active_buffer]);
-            // draw_player(buffers[!active_buffer]);
-            // for (int8_t i = -4; i < 5; i++) {
-            //     ray_cast_angle(buffers[!active_buffer], player.angle+i);
-            // }
-            // for (uint8_t x = (SCREEN_WIDTH / 2) - 10; x < (SCREEN_WIDTH / 2) + 10; x += 5) {
-            //   single_raycast(x, buffers[!active_buffer]);
-            // }
-            raycast(buffers[!active_buffer]);
-
-            // int d = 0;
-            // while (d < 10000) {
-            //     d++;
-            //     draw_pixel2buffer(BLACK, 0, 0, buffers[active_buffer]);
-            // }
-
-            switch_buffer(buffers[!active_buffer]);
-
-            // change active buffer
-            active_buffer = !active_buffer;
-
-        }
+        
 
         xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
         RIA.addr0 = KEYBOARD_INPUT;
@@ -500,6 +514,38 @@ int main() {
                     break;
                 }
                 handled_key = true;
+
+                if (!paused) {
+
+                    // draw on inactive buffer
+                    erase_buffer(buffers[!active_buffer]);
+                    if(show_buffers_indicators){
+                        draw_circle2buffer(WHITE, (active_buffer ? SCREEN_WIDTH - 20 : 20), 20, 8, buffers[!active_buffer]);
+                        set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
+                        draw_string2buffer((active_buffer ? "0" : "1"), buffers[!active_buffer]);
+                    }
+                    // draw_map(buffers[!active_buffer]);
+                    // draw_player(buffers[!active_buffer]);
+                    // for (int8_t i = -4; i < 5; i++) {
+                    //     ray_cast_angle(buffers[!active_buffer], player.angle+i);
+                    // }
+                    // for (uint8_t x = (SCREEN_WIDTH / 2) - 10; x < (SCREEN_WIDTH / 2) + 10; x += 5) {
+                    //   single_raycast(x, buffers[!active_buffer]);
+                    // }
+                    raycast(buffers[!active_buffer]);
+
+                    // int16_t d = 0;
+                    // while (d < 10000) {
+                    //     d++;
+                    //     draw_pixel2buffer(BLACK, 0, 0, buffers[active_buffer]);
+                    // }
+
+                    switch_buffer(buffers[!active_buffer]);
+
+                    // change active buffer
+                    active_buffer = !active_buffer;
+
+                }
             }
         } else { // no keys down
             handled_key = false;
@@ -513,9 +559,9 @@ int main() {
 }
 
 // // Windows procedure function
-// LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+// LRESULT CALLBACK WndProc(HWND hwnd, Uint16_t uMsg, WPARAM wParam, LPARAM lParam) {
 
-//     // int x, y, to_x, to_y;
+//     // int16_t x, y, to_x, to_y;
 //     PAINTSTRUCT ps;
 //     HDC hdc = BeginPaint(hwnd, &ps);
 
@@ -538,7 +584,7 @@ int main() {
 //             // Update the delta time (elapsed time between frames)
 //             // UpdateDeltaTime();
 
-//             // for(int x = 0; x < w; x++)
+//             // for(int16_t x = 0; x < w; x++)
 //             // { 
 //             //   single_raycast(hdc, x);
 //             // }
@@ -617,7 +663,7 @@ int main() {
 // }
 
 // // Windows entry point
-// int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+// int16_t WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int16_t nCmdShow) {
 //     // Register window class
 //     WNDCLASS wc = {0};
 //     wc.lpfnWndProc = WndProc;
