@@ -22,28 +22,30 @@ uint8_t keystates[KEYBOARD_BYTES] = {0};
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
 
 
-#define SCREEN_WIDTH 240
-#define SCREEN_HEIGHT 124
+
+#define SCREEN_WIDTH 240 
+#define SCREEN_HEIGHT 124 
 #define HALF_WIDTH SCREEN_WIDTH / 2
 #define HALF_HEIGHT SCREEN_HEIGHT / 2
 
-#define PLAYER_POS_X 1.5
+#define PLAYER_POS_X 8
 #define PLAYER_POS_Y 5 
 #define PLAYER_ANGLE 0
 #define PLAYER_SPEED 0.1
 #define PLAYER_ROT_SPEED 1
-#define PLAYER_SIZE_SCALE 6
+#define PLAYER_SIZE_SCALE 4
+#define PLAYER_LINE_LEN SCREEN_WIDTH
 
-#define FOV  1,0471975511965977
+#define FOV  64
 #define HALF_FOV  FOV / 2
-#define NUM_RAYS WIDTH / 2
+#define SCALE  48
+#define NUM_RAYS SCREEN_WIDTH / SCALE
 #define HALF_NUM_RAYS NUM_RAYS / 2
-#define DELTA__ANGLE FOV / NUM_RAYS
+#define DELTA_ANGLE 4
 #define MAX_DEPTH 20
 
 
-//SCREEN_DIST = HALF_WIDTH / math.tan(HALF_FOV)
-//SCALE  SCREEN_WIDTH / NUM_RAYS
+#define SCREEN_DIST HALF_WIDTH / 0.57735026919
 
 // for double buffering
 uint16_t buffers[2];
@@ -81,7 +83,7 @@ Player player;
 // Precompute sine and cosine values for rotation
 #define NUM_POINTS 256
 float sine_values[NUM_POINTS] = {
-    0.000000f, 0.024541f, 0.049068f, 0.073565f, 0.098017f, 0.122411f, 0.146730f, 0.170962f, 
+    0.01000f, 0.024541f, 0.049068f, 0.073565f, 0.098017f, 0.122411f, 0.146730f, 0.170962f, 
     0.195090f, 0.219101f, 0.242980f, 0.266713f, 0.290285f, 0.313682f, 0.336890f, 0.359895f, 
     0.382683f, 0.405241f, 0.427555f, 0.449611f, 0.471397f, 0.492898f, 0.514103f, 0.534998f, 
     0.555570f, 0.575808f, 0.595699f, 0.615232f, 0.634393f, 0.653173f, 0.671559f, 0.689541f, 
@@ -97,7 +99,7 @@ float sine_values[NUM_POINTS] = {
     0.555570f, 0.534998f, 0.514103f, 0.492898f, 0.471397f, 0.449611f, 0.427555f, 0.405241f, 
     0.382683f, 0.359895f, 0.336890f, 0.313682f, 0.290285f, 0.266713f, 0.242980f, 0.219101f, 
     0.195090f, 0.170962f, 0.146730f, 0.122411f, 0.098017f, 0.073565f, 0.049068f, 0.024541f, 
-    0.000000f, -0.024541f, -0.049068f, -0.073565f, -0.098017f, -0.122411f, -0.146730f, -0.170962f, 
+    0.01000f, -0.024541f, -0.049068f, -0.073565f, -0.098017f, -0.122411f, -0.146730f, -0.170962f, 
     -0.195090f, -0.219101f, -0.242980f, -0.266713f, -0.290285f, -0.313682f, -0.336890f, -0.359895f, 
     -0.382683f, -0.405241f, -0.427555f, -0.449611f, -0.471397f, -0.492898f, -0.514103f, -0.534998f, 
     -0.555570f, -0.575808f, -0.595699f, -0.615232f, -0.634393f, -0.653173f, -0.671559f, -0.689541f, 
@@ -115,74 +117,8 @@ float sine_values[NUM_POINTS] = {
     -0.195090f, -0.170962f, -0.146730f, -0.122411f, -0.098017f, -0.073565f, -0.049068f, -0.024541f
 };
 
-float cosine_values[NUM_POINTS] = {
-    1.000000f, 0.999699f, 0.998795f, 0.997290f, 0.995185f, 0.992480f, 0.989177f, 0.985278f, 
-    0.980785f, 0.975702f, 0.970031f, 0.963776f, 0.956940f, 0.949528f, 0.941544f, 0.932993f, 
-    0.923880f, 0.914210f, 0.903989f, 0.893224f, 0.881921f, 0.870087f, 0.857728f, 0.844854f, 
-    0.831470f, 0.817585f, 0.803208f, 0.788346f, 0.773010f, 0.757209f, 0.740951f, 0.724247f, 
-    0.707107f, 0.689541f, 0.671559f, 0.653173f, 0.634393f, 0.615232f, 0.595699f, 0.575808f, 
-    0.555570f, 0.534998f, 0.514103f, 0.492898f, 0.471397f, 0.449611f, 0.427555f, 0.405241f, 
-    0.382683f, 0.359895f, 0.336890f, 0.313682f, 0.290285f, 0.266713f, 0.242980f, 0.219101f, 
-    0.195090f, 0.170962f, 0.146730f, 0.122411f, 0.098017f, 0.073565f, 0.049068f, 0.024541f, 
-    0.000000f, -0.024541f, -0.049068f, -0.073565f, -0.098017f, -0.122411f, -0.146730f, -0.170962f, 
-    -0.195090f, -0.219101f, -0.242980f, -0.266713f, -0.290285f, -0.313682f, -0.336890f, -0.359895f, 
-    -0.382683f, -0.405241f, -0.427555f, -0.449611f, -0.471397f, -0.492898f, -0.514103f, -0.534998f, 
-    -0.555570f, -0.575808f, -0.595699f, -0.615232f, -0.634393f, -0.653173f, -0.671559f, -0.689541f, 
-    -0.707107f, -0.724247f, -0.740951f, -0.757209f, -0.773010f, -0.788346f, -0.803208f, -0.817585f, 
-    -0.831470f, -0.844854f, -0.857728f, -0.870087f, -0.881921f, -0.893224f, -0.903989f, -0.914210f, 
-    -0.923880f, -0.932993f, -0.941544f, -0.949528f, -0.956940f, -0.963776f, -0.970031f, -0.975702f, 
-    -0.980785f, -0.985278f, -0.989177f, -0.992480f, -0.995185f, -0.997290f, -0.998795f, -0.999699f, 
-    -1.000000f, -0.999699f, -0.998795f, -0.997290f, -0.995185f, -0.992480f, -0.989177f, -0.985278f, 
-    -0.980785f, -0.975702f, -0.970031f, -0.963776f, -0.956940f, -0.949528f, -0.941544f, -0.932993f, 
-    -0.923880f, -0.914210f, -0.903989f, -0.893224f, -0.881921f, -0.870087f, -0.857728f, -0.844854f, 
-    -0.831470f, -0.817585f, -0.803208f, -0.788346f, -0.773010f, -0.757209f, -0.740951f, -0.724247f, 
-    -0.707107f, -0.689541f, -0.671559f, -0.653173f, -0.634393f, -0.615232f, -0.595699f, -0.575808f, 
-    -0.555570f, -0.534998f, -0.514103f, -0.492898f, -0.471397f, -0.449611f, -0.427555f, -0.405241f, 
-    -0.382683f, -0.359895f, -0.336890f, -0.313682f, -0.290285f, -0.266713f, -0.242980f, -0.219101f, 
-    -0.195090f, -0.170962f, -0.146730f, -0.122411f, -0.098017f, -0.073565f, -0.049068f, -0.024541f
-};
-
-// // for double buffering
-// uint16_t buffers[2];
-// uint8_t active_buffer = 0;
-
-// Constants for fixed-point trigonometry
-enum {cA1 = 3370945099UL, cB1 = 2746362156UL, cC1 = 292421UL};
-enum {n = 13, p = 32, q = 31, r = 3, a = 12};
-
-// Function to calculate fixed-point sine
-// https://www.nullhardware.com/blog/fixed-point-sine-and-cosine-for-embedded-systems/
-//
-// int16_t fpsin(int16_t i) {
-//     i <<= 1;
-//     uint8_t c = i < 0; // Set carry for output pos/neg
-
-//     if(i == (i | 0x4000)) // Flip input value to corresponding value in range [0..8192]
-//         i = (1 << 15) - i;
-//     i = (i & 0x7FFF) >> 1;
-
-//     uint32_t y = (cC1 * ((uint32_t)i)) >> n;
-//     y = cB1 - (((uint32_t)i * y) >> r);
-//     y = (uint32_t)i * (y >> n);
-//     y = (uint32_t)i * (y >> n);
-//     y = cA1 - (y >> (p - q));
-//     y = (uint32_t)i * (y >> n);
-//     y = (y + (1UL << (q - a - 1))) >> (q - a); // Rounding
-
-//     return c ? -y : y;
-// }
-
-// // Function to calculate fixed-point cosine
-// #define fpcos(i) fpsin((int16_t)(((uint16_t)(i)) + 8192U))
-
-// void precompute_sin_cos() {
-//     int16_t angle_step = 32768 / NUM_POINTS; // 32768 is 2^15, representing 2*pi
-
-//     for (int i = 0; i < NUM_POINTS; i++) {
-//         // sine_values[i] = fpsin(i * angle_step) / 4096;
-//         cosine_values[i] = fpcos(i * angle_step) / 4096;
-//     }
-// }
+#define sin(index) (sine_values[(index) % NUM_POINTS])
+#define cos(index) (sine_values[((index) + (NUM_POINTS / 4)) % NUM_POINTS])
 
 // Function to generate the world map from the mini map
 void get_map() {
@@ -222,11 +158,36 @@ void draw_map(uint16_t buffer) {
     }
 } 
 
+// Function to check if the player is colliding with a wall
+bool check_wall(int x, int y) {
+    // Ensure x, y are within map bounds
+    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+        return world_map[y][x] == 1;
+    }
+    return true;  // Return true (indicating a wall) if out of bounds
+}
+
+// Function to check for collision and move the player accordingly
+void check_wall_collision(float dx, float dy) {
+    // Scale factor based on player size and delta time
+    float scale = PLAYER_SIZE_SCALE;
+
+    // Check for collision on x-axis
+    if (!check_wall((int)(player.x + dx * scale), (int)(player.y))) {
+        player.x += dx;
+    }
+
+    // Check for collision on y-axis
+    if (!check_wall((int)(player.x), (int)(player.y + dy * scale))) {
+        player.y += dy;
+    }
+}
+
 void player_movement() {
 
     bool handled_key = false;
-    float sin_a = sine_values[player.angle];
-    float cos_a = cosine_values[player.angle];
+    float sin_a = sin(player.angle);
+    float cos_a = cos(player.angle);
     float dx, dy = 0;
     float speed = PLAYER_SPEED;
     float speed_sin = speed * sin_a;
@@ -236,8 +197,8 @@ void player_movement() {
     RIA.addr0 = KEYBOARD_INPUT;
     RIA.step0 = 0;
 
-    printf("sin_a: %i, cos_a: %i\n", (int16_t)sin_a*1000, (int16_t)cos_a*1000);
-    printf("speed sin: %i, speed cos: %i", (int16_t)speed_sin*1000, (int16_t)speed_cos*1000);
+    // printf("sin_a: %i, cos_a: %i\n", (int16_t)sin_a*1000, (int16_t)cos_a*1000);
+    // printf("speed sin: %i, speed cos: %i", (int16_t)speed_sin*1000, (int16_t)speed_cos*1000);
 
     // printf("1player x: %i, player y: %i\n", (int16_t)(player.x * 100), (int16_t)(player.y * 100));
 
@@ -250,9 +211,9 @@ void player_movement() {
         // check for change in any and all keys
         for (j = 0; j < 8; j++) {
             uint8_t new_key = (new_keys & (1<<j));
-            if ((((i<<3)+j)>3) && (new_key != (keystates[i] & (1<<j)))) {
-                printf( "key %d %s\n", ((i<<3)+j), (new_key ? "pressed" : "released"));
-            }
+            // if ((((i<<3)+j)>3) && (new_key != (keystates[i] & (1<<j)))) {
+            //     printf( "key %d %s\n", ((i<<3)+j), (new_key ? "pressed" : "released"));
+            // }
         }
 
         keystates[i] = new_keys;
@@ -263,20 +224,20 @@ void player_movement() {
         if (!handled_key) { // handle only once per single keypress
             // handle the keystrokes
             if (key(KEY_W)) { 
-                player.x += speed_cos;
-                player.y += speed_sin;
+                dx += speed_cos;
+                dy += speed_sin;
             }
             if (key(KEY_S)) {
-                player.x += -speed_cos;
-                player.y += -speed_sin;
+                dx += -speed_cos;
+                dy += -speed_sin;
             }
             if (key(KEY_A)) {
-                player.x += speed_cos;
-                player.y += -speed_sin;
+                dx += speed_sin;
+                dy += -speed_cos;
             }
             if (key(KEY_D)) {
-                player.x += -speed_cos;
-                player.y += speed_sin;
+                dx += -speed_sin;
+                dy += speed_cos;
             }
             if (key(KEY_LEFT)) {
                 player.angle -= PLAYER_ROT_SPEED;
@@ -289,18 +250,227 @@ void player_movement() {
         }
     } 
 
-    // player.x += dx;
-    // player.y += dy;
-    // printf("2player x: %f, player y: %f\n", player.x, player.y);
-           
+    check_wall_collision(dx, dy);
 
 }
 
 void draw_player(uint16_t buffer){
     draw_circle2buffer(color(GREEN,bpp==8), (uint16_t)(player.x * TILE_SIZE), (uint16_t)(player.y * TILE_SIZE), 5, buffer);
     draw_line2buffer(GREEN, (uint16_t)(player.x * TILE_SIZE), (uint16_t)(player.y * TILE_SIZE), 
-    (uint16_t)(player.x * TILE_SIZE + 10 * cosine_values[player.angle]),
-    (uint16_t)(player.y * TILE_SIZE + 10 * sine_values[player.angle]), buffer);
+    (uint16_t)(player.x * TILE_SIZE + 10 * cos(player.angle)),
+    (uint16_t)(player.y * TILE_SIZE + 10 * sin(player.angle)), buffer);
+}
+
+// Function to check if the current tile is a wall
+bool is_wall(int x, int y) {
+    // printf("is_wall x: %i, y: %i, is: %i\n", x, y, world_map[y][x]);
+    return world_map[y][x] == 1;
+}
+
+// Function to perform ray-casting
+void ray_cast(uint16_t buffer) {
+    float ox = player.x;
+    float oy = player.y;
+    int x_map = (int)player.x;
+    int y_map = (int)player.y;
+
+    uint8_t ray_angle = (player.angle - HALF_FOV) % NUM_POINTS;
+
+    for (int ray = 0; ray < NUM_RAYS; ray++) {
+        // float sin_a = sin(ray_angle);
+        // float cos_a = cos(ray_angle);
+        // printf("ray: %i, angle: %i, sin_a: %f, cos_a: %f\n", ray, ray_angle, sin_a, cos_a);
+
+        // Horizontal intersection calculations
+        float y_hor, dy;
+        if (sin(ray_angle) > 0) {
+            y_hor = y_map + 1;
+            dy = 1;
+        } else {
+            y_hor = y_map - 1e-6;
+            dy = -1;
+        }
+
+        float depth_hor = (y_hor - oy) /sin(ray_angle);
+        float x_hor = ox + depth_hor * cos(ray_angle);
+        float delta_depth_hor = dy / sin(ray_angle);
+        float dx_hor = delta_depth_hor * cos(ray_angle);
+
+        // printf("ox: %f, oy: %f, y_hor: %f, x_hor: %f, defpth_hor: %f, delta_depth_hor: %f, dx_hor: %f\n", ox, oy, y_hor, x_hor, depth_hor, delta_depth_hor, dx_hor);
+
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            int tile_hor_x = (int)x_hor;
+            int tile_hor_y = (int)y_hor;
+            // printf("tile_hor_x %i, tile_hor_y %i\n", tile_hor_x, tile_hor_y);
+
+            if (is_wall(tile_hor_x, tile_hor_y)) {
+                break;
+            }
+
+            x_hor += dx_hor;
+            y_hor += dy;
+            depth_hor += delta_depth_hor;
+        }
+
+        // Vertical intersection calculations
+        float x_vert, dx;
+        if (cos(ray_angle) > 0) {
+            x_vert = x_map + 1;
+            dx = 1;
+        } else {
+            x_vert = x_map - 1e-6;
+            dx = -1;
+        }
+
+        float depth_vert = (x_vert - ox) / cos(ray_angle);
+        float y_vert = oy + depth_vert * sin(ray_angle);
+        float delta_depth_vert = dx / cos(ray_angle);
+        float dy_vert = delta_depth_vert * sin(ray_angle);
+
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            int tile_vert_x = (int)x_vert;
+            int tile_vert_y = (int)y_vert;
+
+            if (is_wall(tile_vert_x, tile_vert_y)) {
+                break;
+            }
+
+            x_vert += dx;
+            y_vert += dy_vert;
+            depth_vert += delta_depth_vert;
+        }
+
+        // Compare depths and choose the closer one
+        float depth = (depth_vert < depth_hor) ? depth_vert : depth_hor;
+
+        // Remove the fishbowl effect
+        // depth *= cos(player.angle a- ray_angle);
+        // printf("depth: %f\n", depth);
+
+
+        // int x = (uint16_t)(player.x * TILE_SIZE);
+        // int y = (uint16_t)(player.y * TILE_SIZE); 
+        // int to_x = ox * TILE_SIZE + TILE_SIZE * depth * cos(ray_angle);
+        // int to_y = oy * TILE_SIZE + TILE_SIZE * depth * sin(ray_angle);
+        // printf("x: %i, y: %i, to_x: %i, to_y: %i\n", x, y, to_x, to_y);
+        // draw_line2buffer(GREEN, x, y, to_x, to_y, buffer);
+
+        // Projection (calculating the height of the wall slice for each ray)
+        float proj_height = SCREEN_DIST / (depth + 0.0001f);
+
+        // Draw walls (this part also needs your graphics library for drawing)
+        int x1 = ray * SCALE;
+        int y1 = (int)(HALF_HEIGHT - proj_height / 2);
+        int x2 = (int)(x1+SCALE);
+        int y2 = (int)proj_height;
+        fill_rect2buffer(WHITE, x1, y1, SCALE, (uint16_t)proj_height, buffer);
+        // printf("x1 %i, y1 %i, x2 %i, y2 %i\n", x1, y1, x2, y2);
+
+        ray_angle = (ray_angle + DELTA_ANGLE) % NUM_POINTS;
+    }
+}
+
+void ray_cast_angle(uint16_t buffer, uint8_t ray_angle) {
+    float ox = player.x;
+    float oy = player.y;
+    int x_map = (int)player.x;
+    int y_map = (int)player.y;
+
+    // uint8_t ray_angle = (player.angle - HALF_FOV) % NUM_POINTS;
+
+    // for (int ray = 0; ray < NUM_RAYS; ray++) {
+        // float sin_a = sin(ray_angle);
+        // float cos_a = cos(ray_angle);
+        // printf("ray: %i, angle: %i, sin_a: %f, cos_a: %f\n", ray, ray_angle, sin_a, cos_a);
+
+        // Horizontal intersection calculations
+        float y_hor, dy;
+        if (sin(ray_angle) > 0) {
+            y_hor = y_map + 1;
+            dy = 1;
+        } else {
+            y_hor = y_map - 1e-6;
+            dy = -1;
+        }
+
+        float depth_hor = (y_hor - oy) /sin(ray_angle);
+        float x_hor = ox + depth_hor * cos(ray_angle);
+        float delta_depth_hor = dy / sin(ray_angle);
+        float dx_hor = delta_depth_hor * cos(ray_angle);
+
+        // printf("ox: %f, oy: %f, y_hor: %f, x_hor: %f, defpth_hor: %f, delta_depth_hor: %f, dx_hor: %f\n", ox, oy, y_hor, x_hor, depth_hor, delta_depth_hor, dx_hor);
+
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            int tile_hor_x = (int)x_hor;
+            int tile_hor_y = (int)y_hor;
+            // printf("tile_hor_x %i, tile_hor_y %i\n", tile_hor_x, tile_hor_y);
+
+            if (is_wall(tile_hor_x, tile_hor_y)) {
+                break;
+            }
+
+            x_hor += dx_hor;
+            y_hor += dy;
+            depth_hor += delta_depth_hor;
+        }
+
+        // Vertical intersection calculations
+        float x_vert, dx;
+        if (cos(ray_angle) > 0) {
+            x_vert = x_map + 1;
+            dx = 1;
+        } else {
+            x_vert = x_map - 1e-6;
+            dx = -1;
+        }
+
+        float depth_vert = (x_vert - ox) / cos(ray_angle);
+        float y_vert = oy + depth_vert * sin(ray_angle);
+        float delta_depth_vert = dx / cos(ray_angle);
+        float dy_vert = delta_depth_vert * sin(ray_angle);
+
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            int tile_vert_x = (int)x_vert;
+            int tile_vert_y = (int)y_vert;
+
+            if (is_wall(tile_vert_x, tile_vert_y)) {
+                break;
+            }
+
+            x_vert += dx;
+            y_vert += dy_vert;
+            depth_vert += delta_depth_vert;
+        }
+
+        // Compare depths and choose the closer one
+        float depth = (depth_vert < depth_hor) ? depth_vert : depth_hor;
+
+        // Remove the fishbowl effect
+        // depth *= cos(player.angle a- ray_angle);
+        // printf("depth: %f\n", depth);
+
+
+        // int x = (uint16_t)(player.x * TILE_SIZE);
+        // int y = (uint16_t)(player.y * TILE_SIZE); 
+        // int to_x = ox * TILE_SIZE + TILE_SIZE * depth * cos(ray_angle);
+        // int to_y = oy * TILE_SIZE + TILE_SIZE * depth * sin(ray_angle);
+        // // printf("x: %i, y: %i, to_x: %i, to_y: %i\n", x, y, to_x, to_y);
+        // draw_line2buffer(GREEN, x, y, to_x, to_y, buffer);
+        
+        // Projection (calculating the height of the wall slice for each ray)
+        float proj_height = SCREEN_DIST / (depth + 0.0001f);
+
+        // Draw walls (this part also needs your graphics library for drawing)
+        // int x1 = ray * SCALE;
+        // int y1 = (int)(HALF_HEIGHT - proj_height / 2);
+        // int x2 = (int)(x1+SCALE);
+        // int y2 = (int)proj_height;
+        // draw_rect2buffer(WHITE, x1, y1, SCALE, (uint16_t)proj_height, buffer);
+        // Rectangle(hdc, x1, y1, x2, y2);
+        // printf("x1 %i, y1 %i, x2 %i, y2 %i\n", x1, y1, x2, y2);
+
+        // ray_angle = (ray_angle + DELTA_ANGLE) % NUM_POINTS;
+    // }
 }
 
 
@@ -309,7 +479,7 @@ int main() {
     
     bool handled_key = false;
     bool paused = true;
-    bool show_buffers_indicators = false;
+    bool show_buffers_indicators = true;
     uint8_t mode = 0;
     uint8_t i = 0;
 
@@ -360,7 +530,7 @@ int main() {
     draw_string2buffer("Press SPACE to start/stop", buffers[active_buffer]);
     // draw_string("Press SPACE to start/stop");
 
-    draw_map(buffers[!active_buffer]);
+    // draw_map(buffers[!active_buffer]);
     
 
     while (true) {
@@ -379,8 +549,12 @@ int main() {
                 set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
                 draw_string2buffer((active_buffer ? "0" : "1"), buffers[!active_buffer]);
             }
-            draw_map(buffers[!active_buffer]);
-            draw_player(buffers[!active_buffer]);
+            // draw_map(buffers[!active_buffer]);
+            // draw_player(buffers[!active_buffer]);
+            // for (int8_t i = -4; i < 5; i++) {
+            //     ray_cast_angle(buffers[!active_buffer], player.angle+i);
+            // }
+            ray_cast(buffers[!active_buffer]);
             
 
             // int d = 0;
