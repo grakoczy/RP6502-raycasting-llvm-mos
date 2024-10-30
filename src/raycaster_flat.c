@@ -11,22 +11,39 @@
 
 
 
-#define mapWidth 24
-#define mapHeight 24
+#define mapWidth 20
+#define mapHeight 18
 #define SCREEN_WIDTH 240 
 #define SCREEN_HEIGHT 124 
-#define STEP 4
+#define MIN_STEP 5
+#define TILE_SIZE 5
 
-float posX = 22, posY = 12;  //x and y start position
-float dirX = -0.36, dirY = -0.932; //initial direction vector
+float posX = 11.8, posY = 11.3;  //x and y start position
+float dirX =  -1, dirY = -0; //initial direction vector
 float planeX = 0, planeY = 0.66; //the 2d raycaster version of camera plane
 float moveSpeed = 0.3; //the constant value is in squares/second
 float sin_r = 0.09983341664; // precomputed value of sin(0.1 rad)
 float cos_r = 0.99500416527;
 
+uint8_t currentStep = 10;
 
-int16_t w = SCREEN_WIDTH / 2;
-int16_t h = SCREEN_HEIGHT / 2; 
+#define xOffset mapWidth * TILE_SIZE + 10
+#define yOffset SCREEN_HEIGHT / 6 
+
+uint16_t w = SCREEN_WIDTH / 2;
+uint16_t h = SCREEN_HEIGHT / 2; 
+
+bool wireMode = false;
+
+
+bool gamestate_changed = true;
+uint8_t gamestate = 1;  //  0          1         2        3
+uint8_t gamestate_prev = 1;
+#define GAMESTATE_INIT 0
+#define GAMESTATE_IDLE 1
+#define GAMESTATE_MOVING 2
+#define GAMESTATE_CALCULATING 3
+
 
 // for double buffering
 uint16_t buffers[2];
@@ -47,33 +64,28 @@ uint8_t keystates[KEYBOARD_BYTES] = {0};
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
 
 
-int16_t worldMap[mapWidth][mapHeight]=
+int16_t worldMap[mapHeight][mapWidth]=
 {
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,2,2,2,2,2,0,0,0,0,3,0,3,0,3,0,0,0,1},
-  {1,0,0,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,2,0,0,0,2,0,0,0,0,3,0,0,0,3,0,0,0,1},
-  {1,0,0,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,2,2,0,2,2,0,0,0,0,3,0,3,0,3,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,0,4,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,0,0,0,0,5,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,0,4,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,0,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,0,4,0,0,0,2,2,2,2,2,0,0,3,0,3,0,3,0,1},
+  {1,0,4,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
+  {1,0,4,0,0,0,2,0,0,0,2,0,0,3,0,0,0,3,0,1},
+  {1,0,4,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
+  {1,0,4,0,0,0,2,2,0,2,2,0,0,3,0,3,0,3,0,1},
+  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,4,4,4,4,0,1},
+  {1,4,0,4,0,0,0,0,4,0,0,0,0,0,4,0,0,0,0,1},
+  {1,4,0,0,0,0,5,0,4,0,4,4,4,0,4,0,0,4,0,1},
+  {1,4,0,4,0,0,0,0,4,0,0,0,4,0,4,0,0,4,0,1},
+  {1,4,0,4,4,4,4,4,4,0,0,0,4,0,4,0,0,4,0,1},
+  {1,4,0,0,0,0,0,0,0,0,4,4,4,0,4,0,0,4,0,1},
+  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,1},
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
+
 
 float f_abs(float value) {
     // Check if the value is negative
@@ -85,10 +97,18 @@ float f_abs(float value) {
     return value;
 }
 
+uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min, uint8_t out_max) {
+    return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
+}
 
-void raycast(uint16_t buffer)
+
+int raycast(uint16_t buffer)
 {
-    for(int16_t x = 0; x < w; x += STEP)
+    draw_rect2buffer(DARK_GRAY, 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, buffer); // draw frame
+    draw_rect2buffer(DARK_GRAY, xOffset, yOffset, w, h, buffer); // draw frame
+    fill_rect2buffer(14, xOffset, yOffset, w, h/2, buffer);  // draw sky
+    fill_rect2buffer(8, xOffset, yOffset + h/2, w, h/2, buffer); // draw floor
+    for(int16_t x = 0; x < w; x += currentStep)
     {
       //calculate ray position and direction
       float cameraX = 2 * x / (float)w - 1; //x-coordinate in camera space
@@ -112,7 +132,7 @@ void raycast(uint16_t buffer)
       //where |rayDir| is the length of the vector (rayDirX, rayDirY). Its length,
       //unlike (dirX, dirY) is not 1, however this does not matter, only the
       //ratio between deltaDistX and deltaDistY matters, due to the way the DDA
-      //stepping further below works. So the values can be computed as below.
+      //currentStepping further below works. So the values can be computed as below.
       // Division through zero is prevented, even though technically that's not
       // needed in C++ with IEEE 754 floating point16_t values.
       float deltaDistX = (rayDirX == 0) ? 1e30 : f_abs(1 / rayDirX);
@@ -185,7 +205,7 @@ void raycast(uint16_t buffer)
       int16_t drawEnd = lineHeight;
       if(drawEnd >= h) drawEnd = h - 1;
 
-      // printf("lineHeight: %i, drawStart: %i, drawEnd: %i\n", lineHeight, drawStart, drawEnd);
+      printf("lineHeight: %i, drawStart: %i, drawEnd: %i\n", lineHeight, drawStart, drawEnd);
 
       // //choose wall color
       // ColorRGBA color;
@@ -194,40 +214,44 @@ void raycast(uint16_t buffer)
       {
         case 1:  
           if (side == 1){ 
-            color = DARK_RED; 
+            color = mapValue(lineHeight, 2, h, 196, 201);
           } else {
-            color = RED;
+            color = mapValue(lineHeight, 2, h, 52, 57);
           }
           break; //red
         case 2:
           if(side == 1) {
-            color = DARK_GREEN;
+            color = mapValue(lineHeight, 2, h, 46, 51);
           } else { 
-            color = GREEN;  
+            color = mapValue(lineHeight, 2, h, 34, 39);;  
           }
           break; //green
         case 3:
           if (side == 1) {
-            color = DARK_BLUE;
+            color = mapValue(lineHeight, 2, h, 28, 33);;
           } else { 
-            color = BLUE;
+            color = mapValue(lineHeight, 2, h, 22, 27);;
           }   
           break; //blue
         case 4: 
-          if (side == 1) {
-            color = LIGHT_GRAY;
-          } else {
-            color = WHITE;
+          if (side == 1) { //light
+            color = mapValue(lineHeight, 2, h, 249, 255);
+          } else { //dark
+            color = mapValue(lineHeight, 2, h, 237, 243);;
           }
           break; //white
         case 5: 
           if (side == 1) {
-            color = 3;
+            color = mapValue(lineHeight, 2, h, 226, 231);;
           } else {
-            color = YELLOW;
+            color = mapValue(lineHeight, 2, h, 190, 195);;
           } 
           break; //yellow
       }
+
+      printf("color: %i\n", color);
+
+      // int c = [255 / (1 + lineHeight ** 5 * 0.00002)] * 3
 
       // //give x and y sides different brightness
       // if(side == 1) {color = color / 2;}
@@ -236,27 +260,21 @@ void raycast(uint16_t buffer)
       // verLine(x, drawStart, drawEnd, color);
 
       // Draw walls (this part also needs your graphics library for drawing)
-      uint16_t x1 = x + w / 2;
-      uint16_t y1 = drawStart + h / 2;
-      uint16_t width = STEP;
+      uint16_t x1 = w - x + xOffset - currentStep;
+      uint16_t y1 = drawStart + yOffset;
+      uint16_t width = currentStep;
       uint16_t height = drawEnd;
 
-      draw_rect2buffer(DARK_GRAY, w / 2, h / 2, w, h, buffer);
-      // fill_rect2buffer(color, x1, y1, width, height, buffer);
-      // draw_rect2buffer(color, x1, y1, width, height, buffer);
-      draw_vline2buffer(color, x1, y1, drawEnd, buffer);
+      if (!wireMode) {
+        fill_rect2buffer(color, x1, y1, width, height, buffer);
+      } else {
+      draw_rect2buffer(color, x1, y1, width, height, buffer);
+      }
+      // draw_vline2buffer(color, x1, y1, drawEnd, buffer);
 
-      // HPEN hPen = CreatePen(PS_SOLID, 2, color);  // Yellow color
-      // HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);  
-      // MoveToEx(hdc, x, drawStart, NULL);
-      // LineTo(hdc, x, drawEnd);
-
-      // // Restore the old pen and delete the new pen
-      // SelectObject(hdc, hOldPen);
-      // DeleteObject(hPen);
     }
     printf("raycasting finished\n");
-
+    return 0;
 }
 
 void single_raycast(uint16_t buffer, int16_t x)
@@ -390,14 +408,85 @@ void single_raycast(uint16_t buffer, int16_t x)
 }
 
 
+void print_map() {
+    for (int i = 0; i < mapHeight; i++) {
+        for (int j = 0; j < mapWidth; j++) {
+            switch (worldMap[i][j]) {
+                case 0:
+                    printf(" "); // Empty space
+                    break;
+                case 1:
+                    printf("#"); // Wall
+                    break;
+                case 2:
+                    printf("x"); // Some kind of obstacle
+                    break;
+                case 3:
+                    printf("O"); // Another type of obstacle
+                    break;
+                case 4:
+                    printf("."); // Some different feature
+                    break;
+                case 5:
+                    printf("@"); // Special object or feature
+                    break;
+                default:
+                    printf("?"); // Unknown character
+            }
+        }
+        printf("\n"); // New line at the end of each row
+    }
+}
+
+// Function to draw the world map using the draw_rect function
+void draw_map(uint16_t buffer) {
+    for (int i = 0; i < mapHeight; i++) {
+        for (int j = 0; j < mapWidth; j++) {
+          if (worldMap[i][j] > 0) {
+            uint16_t color = WHITE;
+            switch(worldMap[i][j])
+            {
+              case 1: color = RED; break; //red
+              case 2: color = 46; break; //green
+              case 3: color = 30; break; //blue
+              case 4: color = WHITE; break; //white
+              case 5: color = YELLOW; break; //yellow
+            }
+            
+            // Draw a wall tile (represented by a white rectangle)
+            draw_rect2buffer(color, i * TILE_SIZE, j * TILE_SIZE, TILE_SIZE, TILE_SIZE, buffer);
+          }
+        }
+    }
+} 
+
+void draw_player(uint16_t buffer){
+    uint16_t x = (uint16_t)(posX * TILE_SIZE);
+    uint16_t y = (uint16_t)(posY * TILE_SIZE);
+    draw_line2buffer(GREEN, x, y, x + (int16_t)(dirX * 20), y + (int16_t)(dirY * 20), buffer);
+    draw_pixel2buffer(color(YELLOW,bpp==8), x, y, buffer);
+}
+
+void handleCalculation(uint16_t buffer) {
+
+    gamestate = GAMESTATE_CALCULATING;
+    draw_map(buffer);
+    draw_player(buffer);
+    raycast(buffer);
+    gamestate = GAMESTATE_IDLE;
+
+}
+
+
 int16_t main() {
     bool handled_key = false;
     bool paused = false;
     bool show_buffers_indicators = false;
     uint8_t mode = 0;
     uint8_t i = 0;
+    uint8_t timer = 0;
 
-    
+    gamestate = GAMESTATE_INIT;
 
     // init_bitmap_graphics(0xFF00, buffers[active_buffer], 0, 2, 240, 124, 16);
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
@@ -405,6 +494,8 @@ int16_t main() {
     // erase_canvas();
 
     printf("width: %i, height: %i\n", canvas_width(), canvas_height());
+
+    print_map();
 
     // return 0;
 
@@ -419,30 +510,40 @@ int16_t main() {
 
     // Precompute sine and cosine values
     set_text_color(color(WHITE,bpp==8));
-    // set_cursor(10, 110);
-    // draw_string("Precomputing sine and cosine values...");
-    // draw_string2buffer("Precomputing sine and cosine values...", buffers[active_buffer]);
-    // precompute_sin_cos();
 
-    // for (int16_t i = 0; i < 20; i++) {
-    //     printf("i: %i, sin: %f, cos: %f\n", i, sine_values[i], cosine_values[i]);
-    // }
-    // erase_canvas();
 
-    // set_cursor(10, 110);
-    // draw_string2buffer("Press SPACE to start/stop", buffers[active_buffer]);
-    // draw_string("Press SPACE to start/stop");
+    gamestate = GAMESTATE_CALCULATING;
 
-    // draw_map(buffers[!active_buffer]);
+    draw_map(buffers[!active_buffer]);
+    draw_player(buffers[!active_buffer]);
+    raycast(buffers[!active_buffer]);
+    
+    switch_buffer(buffers[!active_buffer]);
+    // change active buffer
+    active_buffer = !active_buffer;
 
-    raycast(buffers[active_buffer]);
+    gamestate = GAMESTATE_IDLE;
     
 
     while (true) {
 
-        // draw_map();
+        if (gamestate == GAMESTATE_IDLE) timer++;
 
-        // draw_player();
+        if (timer == 255) { 
+          
+          if (currentStep >= 5) {
+            currentStep -= 5;
+            if (currentStep == 0) currentStep = 2;
+            // draw on inactive buffer
+            erase_buffer(buffers[!active_buffer]);
+
+            handleCalculation(buffers[!active_buffer]);
+
+            switch_buffer(buffers[!active_buffer]);
+            // change active buffer
+            active_buffer = !active_buffer;
+          }
+        }
 
         
 
@@ -469,7 +570,7 @@ int16_t main() {
 
         // check for a key down
         if (!(keystates[0] & 1)) {
-            if (!handled_key) { // handle only once per single keypress
+            // if (!handled_key) { // handle only once per single keypress
                 // handle the keystrokes
                 if (key(KEY_SPACE)) {
                     paused = !paused;
@@ -479,7 +580,8 @@ int16_t main() {
                         // draw_string("Press SPACE to start");
                     }
                 }
-                if (key(KEY_LEFT)){
+                if (key(KEY_RIGHT)){
+                  gamestate = GAMESTATE_MOVING;
                   //both camera direction and camera plane must be rotated
                   float oldDirX = dirX;
                   dirX = dirX * cos_r - dirY * sin_r;
@@ -488,7 +590,8 @@ int16_t main() {
                   planeX = planeX * cos_r - planeY * sin_r;
                   planeY = oldPlaneX * sin_r + planeY * cos_r;
                 }
-                if (key(KEY_RIGHT)){
+                if (key(KEY_LEFT)){
+                  gamestate = GAMESTATE_MOVING;
                     //both camera direction and camera plane must be rotated
                   float oldDirX = dirX;
                   dirX = dirX * cos_r - dirY * -sin_r;
@@ -498,22 +601,28 @@ int16_t main() {
                   planeY = oldPlaneX * -sin_r + planeY * cos_r;
                 }
                 if (key(KEY_UP)) {
-                    if(worldMap[(int)(posX + dirX * moveSpeed)][(int)(posY)] == false) posX += dirX * moveSpeed;
-                    if(worldMap[(int)(posX)][(int)(posY + dirY * moveSpeed)] == false) posY += dirY * moveSpeed;
+                  gamestate = GAMESTATE_MOVING;
+                  if(worldMap[(int)(posX + dirX * moveSpeed)][(int)(posY)] == false) posX += dirX * moveSpeed;
+                  if(worldMap[(int)(posX)][(int)(posY + dirY * moveSpeed)] == false) posY += dirY * moveSpeed;
                 }
                 if (key(KEY_DOWN)) {
+                  gamestate = GAMESTATE_MOVING;
                   if(worldMap[(int)(posX - dirX * moveSpeed)][(int)(posY)] == false) posX -= dirX * moveSpeed;
                   if(worldMap[(int)(posX)][(int)(posY - dirY * moveSpeed)] == false) posY -= dirY * moveSpeed;
                 }
                 if (key(KEY_3)) {
                     show_buffers_indicators = !show_buffers_indicators;
                 }
+                if (key(KEY_M)) {
+                  wireMode = !wireMode;
+                }
                 if (key(KEY_ESC)) {
                     break;
                 }
                 handled_key = true;
 
-                // printf("dirX: %i, dirY: %i\n", (int)(dirX*1000), (int)(dirY * 1000));
+                printf("posX: %i, posY: %i, dirX: %i, dirY: %i\n", (int)(posX*1000), (int)(posY*1000), (int)(dirX*1000), (int)(dirY * 1000));
+                // printf("planeX: %i, planeY: %i\n", (int)(planeX*1000), (int)(planeY * 1000));
 
                 if (!paused) {
 
@@ -525,32 +634,22 @@ int16_t main() {
                         set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
                         draw_string2buffer((active_buffer ? "0" : "1"), buffers[!active_buffer]);
                     }
-                    // draw_map(buffers[!active_buffer]);
-                    // draw_player(buffers[!active_buffer]);
-                    // for (int8_t i = -4; i < 5; i++) {
-                    //     ray_cast_angle(buffers[!active_buffer], player.angle+i);
-                    // }
-                    // for (uint8_t x = (SCREEN_WIDTH / 2) - 10; x < (SCREEN_WIDTH / 2) + 10; x += 5) {
-                    //   single_raycast(x, buffers[!active_buffer]);
-                    // }
-                    raycast(buffers[!active_buffer]);
+                    
+                    if (gamestate == GAMESTATE_MOVING) {
+                      currentStep = 10;
+                    }
 
-                    // int16_t d = 0;
-                    // while (d < 10000) {
-                    //     d++;
-                    //     draw_pixel2buffer(BLACK, 0, 0, buffers[active_buffer]);
-                    // }
+                    handleCalculation(buffers[!active_buffer]);
 
                     switch_buffer(buffers[!active_buffer]);
-
                     // change active buffer
                     active_buffer = !active_buffer;
 
                 }
             }
-        } else { // no keys down
-            handled_key = false;
-        }
+        // } else { // no keys down
+        //     handled_key = false;
+        // }
         // erase_canvas();
 
     }
@@ -559,140 +658,4 @@ int16_t main() {
     
 }
 
-// // Windows procedure function
-// LRESULT CALLBACK WndProc(HWND hwnd, Uint16_t uMsg, WPARAM wParam, LPARAM lParam) {
-
-//     // int16_t x, y, to_x, to_y;
-//     PAINTSTRUCT ps;
-//     HDC hdc = BeginPaint(hwnd, &ps);
-
-//     switch (uMsg) {
-//         case WM_PAINT: {
-            
-
-//             // Fill background with black
-//             HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));  // Black color
-//             FillRect(hdc, &ps.rcPaint, hBrush);
-//             DeleteObject(hBrush);  // Clean up brush
-            
-//             // Set up white color for drawing the ship and other objects
-//             // HPEN hPen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));  // White color for objects
-//             // SelectObject(hdc, hPen);
-
-//             // draw_map(hdc);
-//             // draw_player(hdc);
-//             // ray_cast_int(hdc);
-//             // Update the delta time (elapsed time between frames)
-//             // UpdateDeltaTime();
-
-//             // for(int16_t x = 0; x < w; x++)
-//             // { 
-//             //   single_raycast(hdc, x);
-//             // }
-//             single_raycast(hdc, SCREEN_WIDTH / 2);
-
-//             // raycast(hdc);
-            
-//             // Delete the pen after use
-//             // DeleteObject(hPen);
-            
-//             EndPaint(hwnd, &ps);
-//         } break;
-
-//         case WM_KEYDOWN:
-//             switch (wParam) {
-//                 case VK_LEFT:{
-//                   //both camera direction and camera plane must be rotated
-//                   float oldDirX = dirX;
-//                   dirX = dirX * cos_r - dirY * sin_r;
-//                   dirY = oldDirX * sin_r + dirY * cos_r;
-//                   float oldPlaneX = planeX;
-//                   planeX = planeX * cos_r - planeY * sin_r;
-//                   planeY = oldPlaneX * sin_r + planeY * cos_r;
-//                 } break;
-//                 case VK_RIGHT:{
-//                     //both camera direction and camera plane must be rotated
-//                   float oldDirX = dirX;
-//                   dirX = dirX * cos_r - dirY * -sin_r;
-//                   dirY = oldDirX * -sin_r + dirY * cos_r;
-//                   float oldPlaneX = planeX;
-//                   planeX = planeX * cos_r - planeY * -sin_r;
-//                   planeY = oldPlaneX * -sin_r + planeY * cos_r;
-//                 } break;
-//                 case VK_UP: {
-//                     if(worldMap[int(posX + dirX * moveSpeed)][int(posY)] == false) posX += dirX * moveSpeed;
-//                     if(worldMap[int(posX)][int(posY + dirY * moveSpeed)] == false) posY += dirY * moveSpeed;
-//                 } break;
-//                 case VK_DOWN: {
-//                   if(worldMap[int(posX - dirX * moveSpeed)][int(posY)] == false) posX -= dirX * moveSpeed;
-//                   if(worldMap[int(posX)][int(posY - dirY * moveSpeed)] == false) posY -= dirY * moveSpeed;
-//                 }
-//                 // case VK_SPACE:
-//                 //     fire_bullet();  // Fire bullet on space press
-//                 //     break;
-//                 case VK_ESCAPE:
-//                     PostQuitMessage(0); 
-//                     break;
-//             }
-//             // player_movement(uMsg, wParam);
-//             // ray_cast(hdc);
-//             // ray_cast_int(hdc);
-//             // raycast(hdc);
-          
-//             break;
-
-//         case WM_KEYUP:
-//             switch (wParam) {
-//                 // case VK_UP: {
-//                 //     show_fire = false;
-//                 // } break;
-//             }
-//             break;
-
-//         case WM_TIMER:
-//             InvalidateRect(hwnd, NULL, FALSE);  // Request to redraw the window
-//             break;
-
-//         case WM_DESTROY:
-//             PostQuitMessage(0);
-//             break;
-
-//         default:
-//             return DefWindowProc(hwnd, uMsg, wParam, lParam);
-//     }
-//     return 0;
-// }
-
-// // Windows entry point
-// int16_t WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int16_t nCmdShow) {
-//     // Register window class
-//     WNDCLASS wc = {0};
-//     wc.lpfnWndProc = WndProc;
-//     wc.hInstance = hInstance;
-//     wc.lpszClassName = "Raycaster";
-//     RegisterClass(&wc);
-
-//     // Create window
-//     HWND hwnd = CreateWindow(wc.lpszClassName, "Raycaster", WS_OVERLAPPEDWINDOW,
-//                              CW_USEDEFAULT, CW_USEDEFAULT, SCREEN_WIDTH, SCREEN_HEIGHT+20,
-//                              NULL, NULL, hInstance, NULL);
-
-//     ShowWindow(hwnd, nCmdShow);
-//     UpdateWindow(hwnd);
-
-//     // Initialize game
-//     // init_game();
-//     SetTimer(hwnd, 1, 50, NULL); // Set timer for game loop
-//     // Initialize the timer for frame-independent movement
-//     InitializeTimer();
-
-//     // Main message loop
-//     MSG msg;
-//     while (GetMessage(&msg, NULL, 0, 0)) {
-//         TranslateMessage(&msg);
-//         DispatchMessage(&msg);
-//     }
-
-//     return (int) msg.wParam;
-// }
 
