@@ -581,7 +581,7 @@ void draw_map(uint16_t buffer) {
 void draw_player(uint16_t buffer){
     uint16_t x = (uint16_t)(posX * TILE_SIZE);
     uint16_t y = (uint16_t)(posY * TILE_SIZE);
-    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + (int16_t)(dirX * 8), y + (int16_t)(dirY * 8));
+    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + (int16_t)(dirX * 4), y + (int16_t)(dirY * 4));
     draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
     // draw_line2buffer(GREEN, x, y, x + (int16_t)(dirX * 20), y + (int16_t)(dirY * 20), buffer);
     // draw_pixel2buffer(color(YELLOW,bpp==8), x, y, buffer);
