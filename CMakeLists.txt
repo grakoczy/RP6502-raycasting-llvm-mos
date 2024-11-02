@@ -7,6 +7,6 @@ add_executable(raycast)
 rp6502_executable(raycast)
 target_sources(raycast PRIVATE
     src/colors.c
-    src/bitmap_graphics_db.c
+    src/bitmap_graphics.c
     src/raycaster_flat.c
 )
