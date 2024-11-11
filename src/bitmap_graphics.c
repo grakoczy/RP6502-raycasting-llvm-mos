@@ -251,7 +251,8 @@ void erase_canvas(void)
 void draw_pixel(uint16_t color, uint16_t x, uint16_t y)
 {
     if (bpp_mode == 4) { // 16bpp
-        RIA.addr0 = canvas_w*2 * y + x*2;
+        // RIA.addr0 = canvas_w*2 * y + x*2;
+        RIA.addr0 = (canvas_w << 1) * y + (x << 1);
         RIA.step0 = 1;
         RIA.rw0 = color;
         RIA.rw0 = color >> 8;
@@ -285,19 +286,52 @@ void draw_pixel(uint16_t color, uint16_t x, uint16_t y)
 // ---------------------------------------------------------------------------
 void draw_vline(uint16_t color, uint16_t x, uint16_t y, uint16_t h)
 {
-    uint16_t i;
-    for (i=y; i<(y+h); i++) {
-        draw_pixel(color, x, i);
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        for (uint16_t i = 0; i < h; i++) {
+            // Calculate the address for the current pixel in the column
+            row_addr = ((canvas_w << 1) * (y + i)) + (x << 1);
+
+            // Set the address and color for the current pixel
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1;
+            RIA.rw0 = color_low;
+            RIA.rw0 = color_high;
+        }
+    } else {
+        // Fallback for other bpp modes
+        for (uint16_t i = y; i < (y + h); i++) {
+            draw_pixel(color, x, i);
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 void draw_hline(uint16_t color, uint16_t x, uint16_t y, uint16_t w)
 {
-    uint16_t i;
-    for (i=x; i<(x+w); i++) {
-        draw_pixel(color, i, y);
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        // Calculate the starting address for the horizontal line
+        row_addr = ((canvas_w << 1) * y) + (x << 1);
+
+        // Set the address and step for horizontal line
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+        for (uint16_t i = 0; i < w; i++) {
+            RIA.rw0 = color_low;
+            RIA.rw0 = color_high;
+        }
+    } else {
+        // Fallback for other bpp modes
+        for (uint16_t i = x; i < (x + w); i++) {
+            draw_pixel(color, i, y);
+        }
     }
 }
 
@@ -361,13 +395,155 @@ void draw_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+// {
+//     uint16_t i, j;
+//     for(i=x; i<(x+w); i++) {
+//         for(j=y; j<(y+h); j++) {
+//             draw_pixel(color, i, j);
+//         }
+//     }
+// }
+
 void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
-    uint16_t i, j;
-    for(i=x; i<(x+w); i++) {
-        for(j=y; j<(y+h); j++) {
-            draw_pixel(color, i, j);
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        
+        // Precompute the color bytes
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        // Loop through each row
+        for (uint16_t j = 0; j < h; j++) {
+            // Calculate the starting address of the row
+            row_addr = ((canvas_w << 1) * (y + j)) + (x << 1);
+            
+            // Set the initial address and step for the row
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+            // Fill the row with the color
+            for (uint16_t i = 0; i < w; i++) {
+                RIA.rw0 = color_low;
+                RIA.rw0 = color_high;
+            }
         }
+    } else {
+        // Fallback to the original implementation for other bpp modes
+        for (uint16_t i = x; i < (x + w); i++) {
+            for (uint16_t j = y; j < (y + h); j++) {
+                draw_pixel(color, i, j);
+            }
+        }
+    }
+}
+
+void fill_rect_fast(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (bpp_mode != 4) {
+        fill_rect(color, x, y, w, h);
+        return;
+    }
+
+    // 16bpp mode optimization
+    uint16_t start_addr = (canvas_w << 1) * y + (x << 1);
+    uint16_t end_addr = start_addr + (w << 1) * h;
+
+    // Set up RIA for 16bpp mode once
+    RIA.addr0 = start_addr;
+    RIA.step0 = 2; // Increment address by 2 for 16-bit writes
+    RIA.rw0 = color;
+    RIA.rw0 = color >> 8;
+
+    
+    // Loop-unrolling and batch pixel writes
+    uint16_t i, j;
+    for (i = 0; i < h; i++) {
+        for (j = 0; j < w; j += 4) {
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+        }
+        RIA.addr0 += canvas_w << 1; // Move to the next line
+    }
+    
+}
+
+/* draw trapezoid with uneven lenght of vertical sides, like this 
+/ |
+\ |
+ */
+// Function to draw a trapezoid with vertical left and right sides
+void fill_trapezoid(uint16_t color, uint16_t x, uint16_t y, uint16_t width, uint16_t height1, uint16_t height2) {
+    // Calculate the total vertical extent of the trapezoid
+    uint16_t total_height = abs(height2 - height1);
+
+    // Calculate the slope of height change per row along the y-axis in fixed-point (8.8 format)
+    int16_t height_slope = ((int16_t)total_height << 8) / width;
+    
+    printf("slope: %i\n", height_slope);
+
+    // Initialize the starting height (top height) in fixed-point format (8.8)
+    int16_t current_height = height1 << 8;
+
+    // Iterate over each column in the trapezoid
+    for (uint16_t dx = 0; dx < width; dx++) {
+        // Compute the integer height for the current column by shifting the fixed-point height
+        uint16_t column_height = current_height >> 8;
+        uint16_t y_offset = ((total_height - column_height) >> 1);
+
+        // Draw a vertical line starting at (x + dx, y) with the computed column height
+        draw_vline(color, x + dx, y + y_offset, column_height);
+        // draw_vline(color, x + dx, y, column_height);
+
+        // Update the height for the next column
+        current_height += height_slope;
+        // printf("column_height: %i, offset: %i\n", column_height, y_offset);
+    }
+}
+
+void draw_trapezoid(uint16_t color, uint16_t x, uint16_t y, uint16_t width, uint16_t height1, uint16_t height2) {
+    // Determine if we need to reverse the slope
+    int reverse = 0;
+    if (height1 > height2) {
+        uint16_t temp = height1;
+        height1 = height2;
+        height2 = temp;
+        reverse = 1; // Flag to indicate the slope direction should be reversed
+    }
+
+    // Calculate half-width for symmetrical drawing around x
+    uint16_t half_width = width / 2;
+
+    // Calculate the total vertical height difference
+    int16_t total_height_diff = height2 - height1;
+
+    // Slope of height per column in fixed-point 8.8 format
+    int16_t height_slope = (total_height_diff << 8) / width;
+
+    // Starting height (in fixed-point format)
+    int16_t current_height = reverse ? (height2 << 8) : (height1 << 8);
+
+    // Draw the trapezoid column by column
+    for (int16_t dx = -half_width; dx <= half_width; dx++) {
+        // Determine the height of the current column, converting from fixed-point
+        uint16_t column_height = current_height >> 8;
+
+        // Calculate the starting y-coordinate to center the trapezoid vertically
+        uint16_t y_start = y - column_height / 2;
+
+        // Draw a vertical line for each column
+        for (uint16_t dy = 0; dy < column_height; dy++) {
+            draw_pixel(color, x + dx, y_start + dy);
+        }
+
+        // Update height for the next column, reversing slope if needed
+        current_height += reverse ? -height_slope : height_slope;
     }
 }
 

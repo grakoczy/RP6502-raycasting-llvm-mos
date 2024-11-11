@@ -8,5 +8,6 @@ rp6502_executable(raycast)
 target_sources(raycast PRIVATE
     src/colors.c
     src/bitmap_graphics.c
+    src/qfp16.c
     src/raycaster_flat.c
 )
