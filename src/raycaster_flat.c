@@ -26,18 +26,6 @@ const qFP16_t MAXQVAL = qFP16_Constant(32767.999985);
 const  qFP16_t one = qFP16_Constant(1.0f);
 const  qFP16_t minusone = qFP16_Constant(-1.0f);
 
-// float fposX = 9, fposY = 11;  //x and y start position
-// float fdirX =  0, fdirY = -1; //initial direction vector
-// float fprevDirX, fprevDirY;
-// float fplaneX = 0.66, fplaneY = 0; //the 2d raycaster version of camera plane
-// float dirX =  -0.681, dirY = -0.731; //initial direction vector
-// float planeX = 0.482, planeY = -0.449; //the 2d raycaster version of camera plane
-// float fmoveSpeed = 0.5; //the constant value is in squares/second
-// float sin_r = 0.09983341664; // precomputed value of sin(0.1 rad)
-// float cos_r = 0.99500416527; 
-// float fsin_r = 0.24740395925; // precomputed value of sin(0.25 rad)
-// float fcos_r = 0.96891242171;
-
 
 qFP16_t posX;
 qFP16_t posY;  //x and y start position
@@ -58,14 +46,12 @@ uint8_t currentScale = SCALE;
 uint8_t xOffset = SCREEN_WIDTH  / (SCALE * 2);
 uint8_t yOffset = SCREEN_HEIGHT / (SCALE * 2);
 
-uint16_t w = SCREEN_WIDTH / SCALE;
-uint16_t h = SCREEN_HEIGHT / SCALE; 
+uint16_t w = 120;
+uint16_t h = 64; 
 
 bool wireMode = false;
 
-uint8_t lineHeigths[SCREEN_WIDTH / 2];
-uint8_t sides[SCREEN_WIDTH / 2];
-uint16_t colors[SCREEN_WIDTH / 2];
+uint16_t buffer[SCREEN_HEIGHT / SCALE][SCREEN_WIDTH /SCALE];
 
 
 bool gamestate_changed = true;
@@ -134,14 +120,44 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
 }
 
 
+void drawBuffer() {
+  // Loop through each row
+  for (uint8_t j = 0; j < h; j++) {
+      // Calculate the starting address of the row
+      uint16_t row_addr = ((SCREEN_WIDTH << 1) * (yOffset + j)) + (xOffset << 1);
+      
+      // Set the initial address and step for the row
+      RIA.addr0 = row_addr;
+      RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+      // Fill the row with the color
+      for (uint8_t i = 0; i < w; i+=8) {
+          RIA.rw0 = buffer[j][i] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i] >> 8;
+          RIA.rw0 = buffer[j][i+1] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+1] >> 8;
+          RIA.rw0 = buffer[j][i+2] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+2] >> 8;
+          RIA.rw0 = buffer[j][i+3] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+3] >> 8;
+          RIA.rw0 = buffer[j][i+4] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+4] >> 8;
+          RIA.rw0 = buffer[j][i+5] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+5] >> 8;
+          RIA.rw0 = buffer[j][i+6] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+6] >> 8;
+          RIA.rw0 = buffer[j][i+7] ;//& 0xFF;
+          RIA.rw0 = buffer[j][i+7] >> 8;
+      }
+  }
+}
 
 
-
-int raycastFP(uint16_t buffer)
+int raycastFP()
 {
   //calculate and cache the results
   
-  for(int16_t x = 0; x < w; x += currentStep)
+  for(uint8_t x = 0; x < w; x += currentStep)
   {
     
     qFP16_t cameraX = qFP16_Sub(qFP16_Div(qFP16_IntToFP(x << 1), qFP16_IntToFP(w)), one);
@@ -244,17 +260,11 @@ int raycastFP(uint16_t buffer)
     //Calculate height of line to draw on screen
     uint16_t lineHeight = (uint16_t)qFP16_FPToInt(qFP16_Div(qFP16_IntToFP(h), perpWallDist));
     if (lineHeight > h) lineHeight = h;
-
-
-    lineHeigths[x] = lineHeight;
-    sides[x] = side;
-
-
     
     // //choose wall color
     // ColorRGBA color;
     uint8_t r, g, b;
-    uint16_t color = WHITE;
+    uint16_t wallColor, color = WHITE;
     switch(worldMap[mapX][mapY])
     {
       case 1: 
@@ -300,107 +310,81 @@ int raycastFP(uint16_t buffer)
 
     // printf("r: %i, g: %i, b: %i\n", r, g, b);
 
-    color = COLOR_FROM_RGB8(r, g, b);
-    colors[x] = color;
+    wallColor = COLOR_FROM_RGB8(r, g, b);
+
+    int8_t drawStart = -lineHeight / 2 + h / 2;
+    if(drawStart < 0) drawStart = 0;
+    uint8_t drawEnd = drawStart + lineHeight;
+
+    uint16_t skyColor = COLOR_FROM_RGB8(52, 168, 235);
+    uint16_t floorColor = COLOR_FROM_RGB8(110, 80, 90);
+
+    // for (uint8_t i = 1; i <= currentStep; i++){
+      color = skyColor;
+      for (uint8_t y = 0; y < drawStart; y++) {
+        if (currentStep == 2) {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+        } else {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+          buffer[y][x+2] = color;
+          buffer[y][x+3] = color;
+          buffer[y][x+4] = color;
+          buffer[y][x+5] = color;
+          buffer[y][x+6] = color;
+          buffer[y][x+7] = color;
+          buffer[y][x+8] = color;
+          buffer[y][x+9] = color;
+        }
+      }
+      color = wallColor;
+      for (uint8_t y = drawStart; y < drawEnd; y++) {
+        if (currentStep == 2) {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+        } else {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+          buffer[y][x+2] = color;
+          buffer[y][x+3] = color;
+          buffer[y][x+4] = color;
+          buffer[y][x+5] = color;
+          buffer[y][x+6] = color;
+          buffer[y][x+7] = color;
+          buffer[y][x+8] = color;
+          buffer[y][x+9] = color;
+        }
+      }
+      for (uint8_t y = drawEnd; y < h; y++) {
+        color = y << 11;
+        if (currentStep == 2) {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+        } else {
+          buffer[y][x] = color;
+          buffer[y][x+1] = color;
+          buffer[y][x+2] = color;
+          buffer[y][x+3] = color;
+          buffer[y][x+4] = color;
+          buffer[y][x+5] = color;
+          buffer[y][x+6] = color;
+          buffer[y][x+7] = color;
+          buffer[y][x+8] = color;
+          buffer[y][x+9] = color;
+        }
+      }
+    // }
 
     // show progress
-    draw_pixel(color, x + xOffset, yOffset - 1);
+    // draw_pixel(color, x + xOffset, yOffset - 1);
   }
+  drawBuffer();
   // clear progress
-  draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
+  // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
   return 0;
 }
 
-
-void drawWalls(uint16_t buffer) {
-
-  // now it's time to draw
-  uint16_t skyColor = COLOR_FROM_RGB8(52, 168, 235);
-  uint16_t floorColor = COLOR_FROM_RGB8(110, 97, 89);
-
-  // fill_rect(skyColor, xOffset, yOffset, w, h >> 1);
-  // fill_rect(floorColor, xOffset, yOffset+(h >> 1), w, h >> 1);
-  
-  for(int16_t x = 0; x < w; x += currentStep)
-  {
-    uint8_t lineHeight = lineHeigths[x];
-    uint16_t color = colors[x];
-    //calculate lowest and highest pixel to fill in current stripe
-    int16_t drawStart = -lineHeight / 2 + h / 2;
-    if(drawStart < 0) drawStart = 0;
-    // int16_t drawEnd = lineHeight / 2 + h / 2;
-    int16_t drawEnd = lineHeight;
-    if(drawEnd >= h) drawEnd = h - 1;
-
-    uint16_t x1 = x + xOffset;
-    uint16_t y1 = drawStart + yOffset;
-    uint16_t width = currentStep;
-    uint16_t height = drawEnd;
-    // printf("x1: %i, y1: %i", x1, y1);
-
-    if (!wireMode) {
-      fill_rect(skyColor, x1, yOffset, width, drawStart);
-      fill_rect(color, x1, y1, width, height);
-      fill_rect(floorColor, x1, y1+height, width, drawStart);
-      // draw_hline(COLOR_FROM_RGB8(0,0,0), xOffset, yOffset+h, w); //shouldn't be necessary, but I got some missing lines on at the bottom
-      // fill_rect2buffer(color, x1, y1, width, height, buffer);
-    } else {
-      draw_vline(skyColor, x1, yOffset, drawStart);
-      draw_vline(color, x1, y1, height);
-      draw_vline(floorColor, x1, y1+height, drawStart);
-      if (wireMode && currentStep > 1) {
-        for (uint8_t i = 1; i < currentStep; i++) {
-          draw_vline(skyColor, x1+i, yOffset, drawStart);
-          draw_vline(color, x1+i, y1, height);
-          draw_vline(floorColor, x1+i, y1+height, drawStart);
-        }
-      }
-      // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset+h-1, w); //shouldn't be necessary, but I got some missing lines on at the bottom
-    // draw_rect2buffer(color, x1, y1, width, height, buffer);
-    }
-    // draw_vline2buffer(color, x1, y1, drawEnd, buffer);
-
-  }
-}
-
-void printWalls() {
-
-  // now it's time to draw
-  uint16_t skyColor = COLOR_FROM_RGB8(52, 168, 235);
-  uint16_t floorColor = COLOR_FROM_RGB8(110, 97, 89);
-
-  printf("\n");
-  
-  for(int16_t x = 0; x < w; x += currentStep)
-  {
-    uint8_t lineHeight = lineHeigths[x];
-    uint16_t color = colors[x];
-    //calculate lowest and highest pixel to fill in current stripe
-    int16_t drawStart = -lineHeight / 2 + h / 2;
-    if(drawStart < 0) drawStart = 0;
-    // int16_t drawEnd = lineHeight / 2 + h / 2;
-    int16_t drawEnd = lineHeight;
-    if(drawEnd >= h) drawEnd = h - 1;
-
-    uint16_t x1 = x + xOffset;
-    uint16_t y1 = drawStart + yOffset;
-    uint16_t width = currentStep;
-    uint16_t height = drawEnd;
-
-    // printf("l: %i\n", lineHeight);
-    uint8_t i =0;
-    for (i = 0; i < drawStart; i++){
-      printf(" ");
-    }
-    for (i = 0; i < height; i++){
-      printf("#");
-    }
-    printf("\n");
-  
-    // draw_vline2buffer(color, x1, y1, drawEnd, buffer);
-
-  }
-}
 
 
 void print_map() {
@@ -433,15 +417,13 @@ void print_map() {
     }
 }
 
-void draw_ui(uint16_t buffer) {
+void draw_ui() {
   draw_rect(COLOR_FROM_RGB8(50, 50, 50), 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1); // draw frame
   draw_rect(COLOR_FROM_RGB8(50, 50, 50), xOffset, yOffset, w, h); 
-  // draw_rect2buffer(DARK_GRAY, 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, buffer); // draw frame
-  // draw_rect2buffer(DARK_GRAY, xOffset, yOffset, w, h, buffer); // draw frame
 }
 
 // Function to draw the world map using the draw_rect function
-void draw_map(uint16_t buffer) {
+void draw_map() {
 
     for (int i = 0; i < mapHeight; i++) {
         for (int j = 0; j < mapWidth; j++) {
@@ -462,15 +444,12 @@ void draw_map(uint16_t buffer) {
             } else {
               draw_rect(color, i * TILE_SIZE, j * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             }
-            // draw_rect2buffer(color, i * TILE_SIZE, j * TILE_SIZE, TILE_SIZE, TILE_SIZE, buffer);
-          } //else {
-            // draw_rect(COLOR_FROM_RGB8(0,0,0), i * TILE_SIZE, j * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-          // }
+          } 
         }
     }
 } 
 
-void draw_player(uint16_t buffer){
+void draw_player(){
     uint16_t x = (uint16_t)(qFP16_FPToInt(posX) * TILE_SIZE);
     uint16_t y = (uint16_t)(qFP16_FPToInt(posY) * TILE_SIZE);
     draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + 
@@ -483,21 +462,19 @@ void draw_player(uint16_t buffer){
     prevPlayerY = y;
     prevDirX = dirX;
     prevDirY = dirY;
-    // draw_line2buffer(GREEN, x, y, x + (int16_t)(dirX * 20), y + (int16_t)(dirY * 20), buffer);
-    // draw_pixel2buffer(color(YELLOW,bpp==8), x, y, buffer);
 }
 
-void handleCalculation(uint16_t buffer) {
+void handleCalculation() {
 
     gamestate = GAMESTATE_CALCULATING;
     // draw_ui(buffer);
     // draw_map(buffer);
-    draw_player(buffer);
+    draw_player();
     // raycast(buffer);
-    raycastFP(buffer);
+    raycastFP();
     // raycastInt(buffer);
     // printWalls();
-    drawWalls(buffer);
+    // drawWalls(buffer);
     gamestate = GAMESTATE_IDLE;
 
 }
@@ -603,34 +580,18 @@ int16_t main() {
 
     printf("width: %i, height: %i\n", canvas_width(), canvas_height());
 
-    // print_map();
-
-
-    // return 0;
-
-    // assign address for each buffer
-    // buffers[0] = 0x0000;
-    // buffers[1] = 0x7440;
-    // erase_buffer(buffers[active_buffer]);
-    // erase_buffer(buffers[!active_buffer]);
-
-    // active_buffer = 0;
-    // switch_buffer(buffers[active_buffer]);
 
     // Precompute sine and cosine values
     set_text_color(color(WHITE,bpp==8));
 
-    draw_ui(buffers[!active_buffer]);
-    handleCalculation(buffers[!active_buffer]);
+    draw_ui();
 
-    // draw_pixel(COLOR_FROM_RGB8(255, 0, 0), 48, 0);
-    // draw_pixel(COLOR_FROM_RGB8(255, 0, 0), 48, 10);
-    // fill_trapezoid(COLOR_FROM_RGB8(255, 100, 100), 50, 0, 30, 20, 10);
-    // WaitForAnyKey();
 
-    // switch_buffer(buffers[!active_buffer]);
-    // change active buffer
-    // active_buffer = !active_buffer;
+    draw_map();
+
+    handleCalculation();
+
+
 
     gamestate = GAMESTATE_IDLE;
     
@@ -639,19 +600,19 @@ int16_t main() {
 
         if (gamestate == GAMESTATE_IDLE) timer++;
 
-        if (timer == 16) { 
+        if (timer == 16 && currentStep > 2) { 
           
           // if (currentStep >= MIN_STEP) {
-            currentStep -= 2;
-            if (currentStep <= 0)
+            // currentStep -= 4;
+            // if (currentStep <= 0)
             currentStep = 2;
 
             // printf("currentStep: %i\n", currentStep);
             // draw on inactive buffer
             // erase_buffer(buffers[!active_buffer]);
             // erase_canvas();
-            draw_map(buffers[!active_buffer]);
-            handleCalculation(buffers[!active_buffer]);
+            draw_map();
+            handleCalculation();
 
             // switch_buffer(buffers[!active_buffer]);
             // change active buffer
@@ -748,24 +709,7 @@ int16_t main() {
                 if (key(KEY_M)) {
                   wireMode = !wireMode;
                 }
-                if (key(KEY_EQUAL)){
-                  if (currentScale > MAX_SCALE) {
-                    currentScale--;
-                    w = SCREEN_WIDTH / currentScale;
-                    h = SCREEN_HEIGHT / currentScale;
-                    printf("currentScale: %i\n", currentScale);
-                    erase_canvas();
-                  }
-                }
-                if (key(KEY_MINUS)){
-                  if (currentScale < MIN_SCALE) {
-                    currentScale++;
-                    w = SCREEN_WIDTH / currentScale;
-                    h = SCREEN_HEIGHT / currentScale;
-                    printf("currentScale: %i\n", currentScale);
-                    erase_canvas();
-                  }
-                }
+
                 if (key(KEY_ESC)) {
                     break;
                 }
@@ -775,15 +719,6 @@ int16_t main() {
                 // printf("planeX: %i, planeY: %i\n", (int)(planeX*1000), (int)(planeY * 1000));
 
                 if (!paused) {
-
-                    // // draw on inactive buffer
-                    // erase_buffer(buffers[!active_buffer]);
-                    // // draw_rect2buffer(BLACK, w / 2, h / 2, w, h, buffers[!active_buffer]);
-                    // if(show_buffers_indicators){
-                    //     draw_circle2buffer(WHITE, (active_buffer ? SCREEN_WIDTH - 20 : 20), 20, 5, buffers[!active_buffer]);
-                    //     set_cursor((active_buffer ? SCREEN_WIDTH - 22 : 18), 17);
-                    //     draw_string2buffer((active_buffer ? "0" : "1"), buffers[!active_buffer]);
-                    // }
                     
                     if (gamestate == GAMESTATE_MOVING) {
                       currentStep = MOVEMENT_STEP - currentScale;
@@ -791,10 +726,6 @@ int16_t main() {
 
                     // erase_canvas();
                     handleCalculation(buffers[!active_buffer]);
-
-                    // switch_buffer(buffers[!active_buffer]);
-                    // change active buffer
-                    // active_buffer = !active_buffer;
 
                 }
             }
