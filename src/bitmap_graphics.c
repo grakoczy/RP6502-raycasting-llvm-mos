@@ -109,8 +109,8 @@ void init_bitmap_graphics(uint16_t canvas_struct_address,
         canvas_h = 124; // max for 16-bit color
     } else if (bpp_mode_to_bpp[bpp_mode] == 8) { // bits color
         canvas_mode = 2;
-        canvas_w = 320; // max for 8-bit color
-        canvas_h = 180; // max for 8-bit color
+        canvas_w = 240; // max for 8-bit color
+        canvas_h = 124; // max for 8-bit color
     } else if (bpp_mode_to_bpp[bpp_mode] == 4) { // bits color
         canvas_w = 320; // max for 4-bit color
         if (canvas_mode > 2) {
@@ -167,7 +167,7 @@ void init_bitmap_graphics(uint16_t canvas_struct_address,
     //xreg_vga_mode(3, bpp_mode, canvas_struct, plane); // bitmap mode
     xregn(1, 0, 1, 4, 3, bpp_mode, canvas_struct, plane);
 
-    // printf("canvas_mode: %i, bpp_mode: %i, canvas_struct: %i, plane: %i\n", canvas_mode, canvas_struct, plane);
+    printf("canvas_mode: %i, bpp_mode: %i, canvas_struct: %i, plane: %i\n", canvas_mode, canvas_struct, plane);
 
     //xreg_vga_mode(0, 1); // console
 }
@@ -301,7 +301,20 @@ void draw_vline(uint16_t color, uint16_t x, uint16_t y, uint16_t h)
             RIA.rw0 = color_low;
             RIA.rw0 = color_high;
         }
-    } else {
+    } else if (bpp_mode == 3) { // Only optimize for 8bpp mode
+        uint16_t row_addr;
+
+        for (uint16_t i = 0; i < h; i++) {
+            // Calculate the address for the current pixel in the column
+            row_addr = ((canvas_w) * (y + i)) + (x );
+
+            // Set the address and color for the current pixel
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1;
+            RIA.rw0 = color;
+        }
+    }
+    else {
         // Fallback for other bpp modes
         for (uint16_t i = y; i < (y + h); i++) {
             draw_pixel(color, x, i);
@@ -327,7 +340,21 @@ void draw_hline(uint16_t color, uint16_t x, uint16_t y, uint16_t w)
             RIA.rw0 = color_low;
             RIA.rw0 = color_high;
         }
-    } else {
+    } else if (bpp_mode == 3) { // Only optimize for 89bpp mode
+        uint16_t row_addr;
+
+        // Calculate the starting address for the horizontal line
+        row_addr = ((canvas_w) * y) + (x);
+
+        // Set the address and step for horizontal line
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+        for (uint16_t i = 0; i < w; i++) {
+            RIA.rw0 = color;
+        }
+    }
+     else {
         // Fallback for other bpp modes
         for (uint16_t i = x; i < (x + w); i++) {
             draw_pixel(color, i, y);
