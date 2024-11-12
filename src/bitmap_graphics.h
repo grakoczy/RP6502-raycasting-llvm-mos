@@ -52,8 +52,6 @@ void draw_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r);
 void fill_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r);
 void draw_rounded_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r);
 void fill_rounded_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r);
-void fill_trapezoid(uint16_t color, uint16_t x, uint16_t y, uint16_t width, uint16_t height1, uint16_t height2);
-void draw_trapezoid(uint16_t color, uint16_t x, uint16_t y, uint16_t width, uint16_t height1, uint16_t height2);
 
 void set_cursor(uint16_t x, uint16_t y);
 void set_text_multiplier(uint8_t mult);

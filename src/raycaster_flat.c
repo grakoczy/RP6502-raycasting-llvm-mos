@@ -77,7 +77,7 @@ qFP16_t rayDirXValues[ROTATION_STEPS][WINDOW_WIDTH];
 qFP16_t rayDirYValues[ROTATION_STEPS][WINDOW_WIDTH];
 qFP16_t deltaDistXValues[ROTATION_STEPS][WINDOW_WIDTH];
 qFP16_t deltaDistYValues[ROTATION_STEPS][WINDOW_WIDTH];
-int currentRotStep = 1; // Tracks the current rotation step
+uint8_t currentRotStep = 1; // Tracks the current rotation step
 
 
 
@@ -165,15 +165,13 @@ void precalculateRotations() {
     qFP16_t currentPlaneX = planeX;
     qFP16_t currentPlaneY = planeY;
 
-    dirXValues[0] = currentDirX;
-    dirYValues[0] = currentDirY;
-    planeXValues[0] = currentPlaneX;
-    planeYValues[0] = currentPlaneY;
+    
+    
 
     qFP16_t invW = qFP16_Div(one, qFP16_IntToFP(w));
 
     // Compute for right rotation (0.25 rad steps)
-    for (int i = 1; i < ROTATION_STEPS; i++) {
+    for (int i = 0; i < ROTATION_STEPS; i++) {
       printf(".");
       // Rotate right (counterclockwise by 0.25 rad)
       qFP16_t oldDirX = currentDirX;
@@ -204,6 +202,11 @@ void precalculateRotations() {
         deltaDistYValues[i][x] = deltaDistY;
       }
     }
+
+    dirXValues[0] =   dirX;
+    dirYValues[0] =   dirY;
+    planeXValues[0] = planeX;
+    planeYValues[0] = planeY;
     printf("\nDone\n");
 
 }
@@ -645,9 +648,9 @@ int16_t main() {
     precalculateRotations();
     
 
-    // for (uint8_t i = 0; i < ROTATION_STEPS; i++) {
-    //   printf("i: %i, dirX: %s\n", i, qFP16_FPToA(dirXValues[i], ans, 4));
-    // }
+    for (uint8_t i = 0; i < ROTATION_STEPS; i++) {
+      printf("i: %i, dirX: %s\n", i, qFP16_FPToA(dirXValues[i], ans, 4));
+    }
 
     
 
