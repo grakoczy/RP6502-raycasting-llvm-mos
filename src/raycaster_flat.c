@@ -46,12 +46,13 @@ uint8_t currentScale = SCALE;
 uint8_t xOffset = SCREEN_WIDTH  / (SCALE * 2);
 uint8_t yOffset = SCREEN_HEIGHT / (SCALE * 2);
 
-uint16_t w = 120;
-uint16_t h = 64; 
+const uint16_t w = 120;
+const uint16_t h = 64; 
 
 bool wireMode = false;
 
-uint16_t buffer[SCREEN_HEIGHT / SCALE][SCREEN_WIDTH /SCALE];
+uint16_t buffer[h][w];
+uint16_t floorColors[h];
 
 
 bool gamestate_changed = true;
@@ -155,12 +156,14 @@ void drawBuffer() {
 
 int raycastFP()
 {
-  //calculate and cache the results
+  // Precompute common values
+  qFP16_t invW = qFP16_Div(one, qFP16_IntToFP(w));
+  // qFP16_t invH = qFP16_Div(one, qFP16_IntToFP(h));
   
   for(uint8_t x = 0; x < w; x += currentStep)
   {
     
-    qFP16_t cameraX = qFP16_Sub(qFP16_Div(qFP16_IntToFP(x << 1), qFP16_IntToFP(w)), one);
+    qFP16_t cameraX = qFP16_Sub(qFP16_Mul(qFP16_IntToFP(x << 1), invW), one);
     // printf("cameraX: %s\n", qFP16_FPToA(cameraX, ans, 4));
     qFP16_t rayDirX = qFP16_Add(qFP16_Mul(planeX, cameraX), dirX);
     qFP16_t rayDirY = qFP16_Add(qFP16_Mul(planeY, cameraX), dirY);
@@ -317,7 +320,6 @@ int raycastFP()
     uint8_t drawEnd = drawStart + lineHeight;
 
     uint16_t skyColor = COLOR_FROM_RGB8(52, 168, 235);
-    uint16_t floorColor = COLOR_FROM_RGB8(110, 80, 90);
 
     // for (uint8_t i = 1; i <= currentStep; i++){
       color = skyColor;
@@ -357,7 +359,7 @@ int raycastFP()
         }
       }
       for (uint8_t y = drawEnd; y < h; y++) {
-        color = y << 11;
+        color = floorColors[y];
         if (currentStep == 2) {
           buffer[y][x] = color;
           buffer[y][x+1] = color;
@@ -384,7 +386,6 @@ int raycastFP()
   // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
   return 0;
 }
-
 
 
 void print_map() {
@@ -452,11 +453,16 @@ void draw_map() {
 void draw_player(){
     uint16_t x = (uint16_t)(qFP16_FPToInt(posX) * TILE_SIZE);
     uint16_t y = (uint16_t)(qFP16_FPToInt(posY) * TILE_SIZE);
-    draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + 
-              (int16_t)(qFP16_FPToInt(prevDirX) * 4), prevPlayerY + (int16_t)(qFP16_FPToInt(prevDirY) * 4));
+
+    qFP16_t l = qFP16_Constant(4);
+    int8_t lX = (int8_t)(qFP16_FPToInt(qFP16_Mul(dirX, l)));
+    int8_t lY = (int8_t)(qFP16_FPToInt(qFP16_Mul(dirY, l)));
+    int8_t plX = (int8_t)(qFP16_FPToInt(qFP16_Mul(prevDirX, l)));
+    int8_t plY = (int8_t)(qFP16_FPToInt(qFP16_Mul(prevDirY, l)));
+    
+    draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY);
     draw_pixel(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY);
-    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + (int16_t)(qFP16_FPToInt(dirX) * 4), 
-              y + (int16_t)(qFP16_FPToInt(dirY) * 4));
+    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
     draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
     prevPlayerX = x;
     prevPlayerY = y;
@@ -470,9 +476,7 @@ void handleCalculation() {
     // draw_ui(buffer);
     // draw_map(buffer);
     draw_player();
-    // raycast(buffer);
     raycastFP();
-    // raycastInt(buffer);
     // printWalls();
     // drawWalls(buffer);
     gamestate = GAMESTATE_IDLE;
@@ -525,6 +529,12 @@ int16_t main() {
     prevDirX = dirX;
     prevDirY = dirY;
 
+    // prepare floor colors array
+    uint8_t r = 64, g = 40, b = 20;
+    for(uint8_t i = 0; i < h; i++){
+      floorColors[i] = COLOR_FROM_RGB8((r + i), (g + i), (b + i));
+    }
+
 
     posX = qFP16_FloatToFP(9.0f);
     posY = qFP16_FloatToFP(11.0f);  //x and y start position
@@ -538,39 +548,6 @@ int16_t main() {
     cos_r = qFP16_FloatToFP(0.96891242171f);
 
     gamestate = GAMESTATE_INIT;
-
-
-    //fixed point test
-
-    // qFP16_t a = qFP16_Constant( 1.5f );
-    // qFP16_t b = qFP16_Constant( 5.2f );
-    // qFP16_t c = qFP16_Constant( 4.0f );
-    // qFP16_t tmp;
-    // char ans[ 10 ];
-    
-    // tmp = qFP16_Mul( qFP16_IntToFP( 4 ), qFP16_Mul( a, c ) );
-    // tmp = qFP16_Add( -b, qFP16_Sqrt( qFP16_Sub( qFP16_Mul( b, b ), tmp  ) ) );
-    // tmp = qFP16_Div( tmp, qFP16_Mul( qFP16_IntToFP( 2 ), a ) );
-    // printf( " result = %s \r\n" , qFP16_FPToA( tmp, ans, 4 ) ); 
-
-    // raycast(buffers[!active_buffer]);
-    // raycastFP(buffers[!active_buffer]);
-
-    // printf("float\n");
-    // WaitForAnyKey();
-    // for (int i = 0; i < 100; i++){
-    //   raycast(buffers[!active_buffer]);
-    // }
-    // printf("done\n");
-    
-    // WaitForAnyKey();
-    // printf("fp16\n");
-    // for (int i = 0; i < 100; i++){
-    //   raycastFP(buffers[!active_buffer]);
-    // }
-    // printf("done\n");
-
-    // WaitForAnyKey();
     
 
     // init_bitmap_graphics(0xFF00, buffers[active_buffer], 0, 2, 240, 124, 16);
@@ -601,26 +578,10 @@ int16_t main() {
         if (gamestate == GAMESTATE_IDLE) timer++;
 
         if (timer == 16 && currentStep > 2) { 
-          
-          // if (currentStep >= MIN_STEP) {
-            // currentStep -= 4;
-            // if (currentStep <= 0)
             currentStep = 2;
-
-            // printf("currentStep: %i\n", currentStep);
-            // draw on inactive buffer
-            // erase_buffer(buffers[!active_buffer]);
-            // erase_canvas();
             draw_map();
             handleCalculation();
-
-            // switch_buffer(buffers[!active_buffer]);
-            // change active buffer
-            // active_buffer = !active_buffer;
-          // }
         }
-
-        
 
         xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
         RIA.addr0 = KEYBOARD_INPUT;
@@ -658,12 +619,6 @@ int16_t main() {
                 if (key(KEY_RIGHT)){
                   gamestate = GAMESTATE_MOVING;
                   //both camera direction and camera plane must be rotated
-                  // float oldDirX = fdirX;
-                  // fdirX = fdirX * fcos_r - fdirY * fsin_r;
-                  // fdirY = oldDirX * fsin_r + fdirY * fcos_r;
-                  // float oldPlaneX = fplaneX;
-                  // fplaneX = fplaneX * fcos_r - fplaneY * fsin_r;
-                  // fplaneY = oldPlaneX * fsin_r + fplaneY * fcos_r;
                   qFP16_t oldDirX = dirX;
                   dirX = qFP16_Sub(qFP16_Mul(dirX, cos_r), qFP16_Mul(dirY, sin_r));
                   dirY = qFP16_Add(qFP16_Mul(oldDirX, sin_r), qFP16_Mul(dirY, cos_r));
@@ -674,12 +629,6 @@ int16_t main() {
                 if (key(KEY_LEFT)){
                   gamestate = GAMESTATE_MOVING;
                     //both camera direction and camera plane must be rotated
-                  // float oldDirX = fdirX;
-                  // fdirX = fdirX * fcos_r - fdirY * -fsin_r;
-                  // fdirY = oldDirX * -fsin_r + fdirY * fcos_r;
-                  // float oldPlaneX = fplaneX;
-                  // fplaneX = fplaneX * fcos_r - fplaneY * -fsin_r;
-                  // fplaneY = oldPlaneX * -fsin_r + fplaneY * fcos_r;
                   qFP16_t oldDirX = dirX;
                   dirX = qFP16_Sub(qFP16_Mul(dirX, cos_r), qFP16_Mul(dirY, -sin_r));
                   dirY = qFP16_Add(qFP16_Mul(oldDirX, -sin_r), qFP16_Mul(dirY, cos_r));
@@ -696,8 +645,6 @@ int16_t main() {
                 }
                 if (key(KEY_DOWN)) {
                   gamestate = GAMESTATE_MOVING;
-                  // if(worldMap[(int)(fposX - fdirX * fmoveSpeed)][(int)(fposY)] == false) fposX -= fdirX * fmoveSpeed;
-                  // if(worldMap[(int)(fposX)][(int)(fposY - fdirY * fmoveSpeed)] == false) fposY -= fdirY * fmoveSpeed;
                   if(worldMap[qFP16_FPToInt(qFP16_Sub(posX, qFP16_Mul(dirX, moveSpeed)))][qFP16_FPToInt(posY)] == false) 
                     posX = qFP16_Sub(posX, qFP16_Mul(dirX, moveSpeed));
                   if(worldMap[qFP16_FPToInt(posX)][qFP16_FPToInt(qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed)))] == false) 
@@ -725,7 +672,7 @@ int16_t main() {
                     }
 
                     // erase_canvas();
-                    handleCalculation(buffers[!active_buffer]);
+                    handleCalculation();
 
                 }
             }
