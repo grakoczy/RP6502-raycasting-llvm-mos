@@ -9,6 +9,7 @@
 // #include "bitmap_graphics_db.h"
 #include "bitmap_graphics.h"
 #include "qfp16.h"
+#include "textures.h"
 
 #define COLOR_FROM_RGB8(r,g,b) (((b>>3)<<11)|((g>>3)<<6)|(r>>3))
 
@@ -110,7 +111,7 @@ int16_t worldMap[mapHeight][mapWidth]=
   {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
   {1,4,4,4,4,4,4,4,4,0,0,0,0,0,4,4,4,4,0,1},
   {1,4,0,4,0,0,0,0,4,0,0,0,0,0,4,0,0,0,0,1},
-  {1,4,0,0,0,0,5,0,4,0,4,4,4,0,4,0,0,4,0,1},
+  {1,4,0,0,0,0,2,0,4,0,4,4,4,0,4,0,0,4,0,1},
   {1,4,0,4,0,0,0,0,4,0,0,0,4,0,4,0,0,4,0,1},
   {1,4,0,4,4,4,4,4,4,0,0,0,4,0,4,0,0,4,0,1},
   {1,4,0,0,0,0,0,0,0,0,4,4,4,0,4,0,0,4,0,1},
@@ -132,6 +133,7 @@ float f_abs(float value) {
 uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min, uint8_t out_max) {
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
+
 
 
 void drawBuffer() {
@@ -331,59 +333,59 @@ int raycastFP()
     // uint8_t r, g, b;
     // uint16_t wallColor, color = WHITE;
     uint8_t color8, color;
-    switch(worldMap[mapX][mapY])
-    {
-      case 1: 
-        // r = mapValue(lineHeight, 2, h, 150, 255);
-        // r = 150 + lineHeight;
-        // g = 40;
-        // b = 40;
-        if (side == 0)
-          color8 = mapValue(lineHeight, 2, h, 196, 201);
-        else 
-          color8 = mapValue(lineHeight, 2, h, 124, 129);
-        break; //red
-      case 2:
-        // r = 41; 
-        // g = mapValue(lineHeight, 2, h, 150, 255);
-        // g = 150 + lineHeight;
-        // b = 41;
-        if (side == 0)
-          color8 = mapValue(lineHeight, 2, h, 118, 123);
-        else
-          color8 = mapValue(lineHeight, 2, h, 40, 45);
-        break; //green
-      case 3:
-        // r = 40;
-        // g = mapValue(lineHeight, 2, h, 120, 227);
-        // b = mapValue(lineHeight, 2, h, 150, 255);
-        // g = 120 + lineHeight;
-        // b = 150 + lineHeight;
-        if (side == 0)
-          color8 = mapValue(lineHeight, 2, h, 28, 33);
-        else
-          color8 = mapValue(lineHeight, 2, h, 17, 21);
-        break; //blue
-      case 4: 
-        // r = g = b = mapValue(lineHeight, 2, h, 150, 255);
-        // r = g = b = 180 + lineHeight;
-        if (side == 0) 
-          color8 = mapValue(lineHeight, 2, h, 244, 255);
-        else 
-          color8 = mapValue(lineHeight, 2, h-20, 235, 243);
-        break; //white
-      case 5: 
-        // r = mapValue(lineHeight, 2, h, 150, 255);
-        // g = mapValue(lineHeight, 2, h, 150, 255);
-        // r = 180 + lineHeight;
-        // g = 180 + lineHeight;
-        // b = 40;
-        if (side == 0)
-          color8 = mapValue(lineHeight, 2, h, 220, 225);
-        else
-          color8 = mapValue(lineHeight, 2, h, 214, 219);
-        break; //yellow
-    }
+    // switch(worldMap[mapX][mapY])
+    // {
+    //   case 1: 
+    //     // r = mapValue(lineHeight, 2, h, 150, 255);
+    //     // r = 150 + lineHeight;
+    //     // g = 40;
+    //     // b = 40;
+    //     if (side == 0)
+    //       color8 = mapValue(lineHeight, 2, h, 196, 201);
+    //     else 
+    //       color8 = mapValue(lineHeight, 2, h, 124, 129);
+    //     break; //red
+    //   case 2:
+    //     // r = 41; 
+    //     // g = mapValue(lineHeight, 2, h, 150, 255);
+    //     // g = 150 + lineHeight;
+    //     // b = 41;
+    //     if (side == 0)
+    //       color8 = mapValue(lineHeight, 2, h, 118, 123);
+    //     else
+    //       color8 = mapValue(lineHeight, 2, h, 40, 45);
+    //     break; //green
+    //   case 3:
+    //     // r = 40;
+    //     // g = mapValue(lineHeight, 2, h, 120, 227);
+    //     // b = mapValue(lineHeight, 2, h, 150, 255);
+    //     // g = 120 + lineHeight;
+    //     // b = 150 + lineHeight;
+    //     if (side == 0)
+    //       color8 = mapValue(lineHeight, 2, h, 28, 33);
+    //     else
+    //       color8 = mapValue(lineHeight, 2, h, 17, 21);
+    //     break; //blue
+    //   case 4: 
+    //     // r = g = b = mapValue(lineHeight, 2, h, 150, 255);
+    //     // r = g = b = 180 + lineHeight;
+    //     if (side == 0) 
+    //       color8 = mapValue(lineHeight, 2, h, 244, 255);
+    //     else 
+    //       color8 = mapValue(lineHeight, 2, h-20, 235, 243);
+    //     break; //white
+    //   case 5: 
+    //     // r = mapValue(lineHeight, 2, h, 150, 255);
+    //     // g = mapValue(lineHeight, 2, h, 150, 255);
+    //     // r = 180 + lineHeight;
+    //     // g = 180 + lineHeight;
+    //     // b = 40;
+    //     if (side == 0)
+    //       color8 = mapValue(lineHeight, 2, h, 220, 225);
+    //     else
+    //       color8 = mapValue(lineHeight, 2, h, 214, 219);
+    //     break; //yellow
+    // }
 
     // printf("color: %i\n", color);
     // printf("r: %i, g: %i, b: %i\n", r, g, b);
@@ -424,24 +426,24 @@ int raycastFP()
           buffer[y][x+9] = color;
         }
       }
-      color = color8;
-      for (uint8_t y = drawStart; y < drawEnd; y++) {
-        if (currentStep == 2) {
-          buffer[y][x] = color;
-          buffer[y][x+1] = color;
-        } else {
-          buffer[y][x] = color;
-          buffer[y][x+1] = color;
-          buffer[y][x+2] = color;
-          buffer[y][x+3] = color;
-          buffer[y][x+4] = color;
-          buffer[y][x+5] = color;
-          buffer[y][x+6] = color;
-          buffer[y][x+7] = color;
-          buffer[y][x+8] = color;
-          buffer[y][x+9] = color;
-        }
-      }
+      // color = color8;
+      // for (uint8_t y = drawStart; y < drawEnd; y++) {
+      //   if (currentStep == 2) {
+      //     buffer[y][x] = color;
+      //     buffer[y][x+1] = color;
+      //   } else {
+      //     buffer[y][x] = color;
+      //     buffer[y][x+1] = color;
+      //     buffer[y][x+2] = color;
+      //     buffer[y][x+3] = color;
+      //     buffer[y][x+4] = color;
+      //     buffer[y][x+5] = color;
+      //     buffer[y][x+6] = color;
+      //     buffer[y][x+7] = color;
+      //     buffer[y][x+8] = color;
+      //     buffer[y][x+9] = color;
+      //   }
+      // }
       for (uint8_t y = drawEnd; y < h; y++) {
         color = floorColors[y];
         if (currentStep == 2) {
@@ -459,6 +461,66 @@ int raycastFP()
           buffer[y][x+8] = color;
           buffer[y][x+9] = color;
         }
+      }
+
+      //texturing calculations
+      uint8_t texNum = (worldMap[mapX][mapY] - 1) * 2 + side; //1 subtracted from it so that texture 0 can be used!
+
+      
+
+      // Calculate wallX
+      qFP16_t wallX;
+      if (side == 0) wallX = qFP16_Add(posY, qFP16_Mul(perpWallDist, rayDirY));
+      else           wallX = qFP16_Add(posX, qFP16_Mul(perpWallDist, rayDirX));
+
+      // Calculate fractional part using bitwise AND with the fixed-point fraction mask (assuming 16-bit fixed point)
+      wallX = wallX & 0xFFFF; // Equivalent to wallX - qFP16_Floor(wallX)
+
+      // x coordinate on the texture
+      uint8_t texX = (wallX * texWidth) >> 16; // qFP16_Mul(wallX, qFP16_Constant(texWidth))
+      if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) {
+          texX = texWidth - texX - 1;
+      }
+
+      // Precompute texPos step
+      // qFP16_t step = (texHeight << 16) / lineHeight; // 
+      qFP16_t step = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(lineHeight));
+      // Starting texture coordinate (simplified)
+      qFP16_t texPos = ((drawStart - (h >> 1) + (lineHeight >> 1)) * step);
+
+      // Precompute texture offset (optimized)
+      uint8_t texOffsetX = texX;
+
+      // Loop through each pixel from drawStart to drawEnd
+      for (int y = drawStart; y < drawEnd; y++) {
+          // Get texY and increment texPos
+          uint8_t texY = (texPos >> 16) & (texHeight - 1);
+          texPos += step;
+
+          // Fetch the color from texture memory
+          color = texture[texNum][(texY * texWidth) + texOffsetX];
+
+          // Optimize darkening using bitwise operation
+          // if (side == 1) {
+          //     color = (color >> 1) & 0x7F7F7F; // Shift right to halve brightness and mask
+          // }
+
+          // Assign color to buffer (could optimize with loop unrolling or SIMD if needed)
+          if (currentStep == 2) {
+            buffer[y][x] = color;
+            buffer[y][x+1] = color;
+          } else {
+            buffer[y][x] = color;
+            buffer[y][x+1] = color;
+            buffer[y][x+2] = color;
+            buffer[y][x+3] = color;
+            buffer[y][x+4] = color;
+            buffer[y][x+5] = color;
+            buffer[y][x+6] = color;
+            buffer[y][x+7] = color;
+            buffer[y][x+8] = color;
+            buffer[y][x+9] = color;
+          }
       }
     // }
 
@@ -633,7 +695,7 @@ int16_t main() {
 
     planeX = qFP16_FloatToFP(0.66f);
     planeY = qFP16_FloatToFP(0.0f); //the 2d raycaster version of camera plane
-    moveSpeed = qFP16_FloatToFP(0.5f); //the constant value is in squares/second
+    moveSpeed = qFP16_FloatToFP(0.25f); //the constant value is in squares/second
     sin_r = qFP16_FloatToFP(0.24740395925); // precomputed value of sin(0.25 rad)
     cos_r = qFP16_FloatToFP(0.96891242171f);
 
@@ -643,6 +705,8 @@ int16_t main() {
     prevDirY = dirY;
 
     gamestate = GAMESTATE_INIT;
+
+    // generateTextures();
 
     printf("Precalculating values...\n");
     precalculateRotations();
