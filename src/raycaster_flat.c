@@ -19,7 +19,6 @@
 #define SCREEN_HEIGHT 124 
 #define WINDOW_WIDTH 120
 #define WINDOW_HEIGTH 64
-#define MOVEMENT_STEP 8
 #define TILE_SIZE 2
 #define SCALE 2
 #define MIN_SCALE 8
@@ -43,7 +42,8 @@ char ans[ 10 ];
 
 uint16_t prevPlayerX, prevPlayerY;
 
-int8_t currentStep = 2;
+int8_t currentStep = 1;
+int8_t movementStep = 4;
 uint8_t currentScale = SCALE;
 
 uint8_t xOffset = SCREEN_WIDTH  / (SCALE * 2);
@@ -410,11 +410,10 @@ int raycastFP()
     // for (uint8_t i = 1; i <= currentStep; i++){
       color = skyColor;
       for (uint8_t y = 0; y < drawStart; y++) {
+        buffer[y][x] = color;
         if (currentStep == 2) {
-          buffer[y][x] = color;
           buffer[y][x+1] = color;
         } else {
-          buffer[y][x] = color;
           buffer[y][x+1] = color;
           buffer[y][x+2] = color;
           buffer[y][x+3] = color;
@@ -446,11 +445,10 @@ int raycastFP()
       // }
       for (uint8_t y = drawEnd; y < h; y++) {
         color = floorColors[y];
-        if (currentStep == 2) {
-          buffer[y][x] = color;
+        buffer[y][x] = color;
+        if (currentStep == 2) {          
           buffer[y][x+1] = color;
         } else {
-          buffer[y][x] = color;
           buffer[y][x+1] = color;
           buffer[y][x+2] = color;
           buffer[y][x+3] = color;
@@ -506,11 +504,10 @@ int raycastFP()
           // }
 
           // Assign color to buffer (could optimize with loop unrolling or SIMD if needed)
+          buffer[y][x] = color;
           if (currentStep == 2) {
-            buffer[y][x] = color;
             buffer[y][x+1] = color;
           } else {
-            buffer[y][x] = color;
             buffer[y][x+1] = color;
             buffer[y][x+2] = color;
             buffer[y][x+3] = color;
@@ -745,7 +742,7 @@ int16_t main() {
         if (gamestate == GAMESTATE_IDLE) timer++;
 
         if (timer == 16 && currentStep > 2) { 
-            currentStep = 2;
+            currentStep = 1;
             draw_map();
             handleCalculation();
         }
@@ -832,11 +829,11 @@ int16_t main() {
                   if(worldMap[qFP16_FPToInt(posX)][qFP16_FPToInt(qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed)))] == false) 
                     posY = qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed));
                 }
-                if (key(KEY_3)) {
-                    show_buffers_indicators = !show_buffers_indicators;
+                if (key(KEY_EQUAL)) {
+                    if (movementStep < 10) movementStep += 2;
                 }
-                if (key(KEY_M)) {
-                  wireMode = !wireMode;
+                if (key(KEY_MINUS)) {
+                  if (movementStep > 4) movementStep -= 2;
                 }
 
                 if (key(KEY_ESC)) {
@@ -854,7 +851,7 @@ int16_t main() {
                 if (!paused) {
                     
                     if (gamestate == GAMESTATE_MOVING) {
-                      currentStep = MOVEMENT_STEP;
+                      currentStep = movementStep;
                     }
 
                     // erase_canvas();

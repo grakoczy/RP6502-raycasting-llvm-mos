@@ -1,7 +1,18 @@
 from PIL import Image
 import numpy as np
-import sys
 import os
+
+# Define your predefined list of image files
+image_files = [
+    "greystone32x32.png",        # Texture 0
+    "greystone32x32dark.png",         # Texture 1
+    "redbrick32x32.png",        # Texture 2
+    "redbrick32x32dark.png",        # Texture 3
+    "bluestone32x32.png",        # Texture 4
+    "bluestone32x32dark.png",        # Texture 5
+    "colorstone32x32.png",         # Texture 6
+    "colorstone32x32dark.png"           # Texture 7
+]
 
 # Generate the 256-color ANSI palette
 def generate_ansi_palette():
@@ -34,20 +45,17 @@ def closest_ansi_color(r, g, b):
     min_distance = float('inf')
     closest_index = 0
     for i, (cr, cg, cb) in enumerate(ansi_palette):
-        # Convert to Python's int to avoid uint8 overflow issues
         r, g, b = int(r), int(g), int(b)
         cr, cg, cb = int(cr), int(cg), int(cb)
-
-        # Euclidean distance in RGB space
         distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
         if distance < min_distance:
             min_distance = distance
             closest_index = i
     return closest_index
 
-def generate_texture_from_image(image_path):
-    # Load the image
-    image = Image.open(image_path).convert('RGB')
+def generate_texture_from_image(image_path, texture_size):
+    # Load the image and resize it to match the texture size
+    image = Image.open(image_path).convert('RGB').resize(texture_size)
     width, height = image.size
     pixels = np.array(image)
 
@@ -60,41 +68,55 @@ def generate_texture_from_image(image_path):
             color_index = closest_ansi_color(r, g, b)
             texture.append(color_index)
 
-    return width, height, texture
+    return texture
 
-def save_texture_to_header(file_name, width, height, texture):
+def save_textures_to_header(file_name, textures, texture_size):
+    width, height = texture_size
+    num_textures = len(textures)
+
     # Create a header file definition
-    header_content = f"#ifndef TEXTURE_H\n#define TEXTURE_H\n\n"
+    header_content = f"#ifndef TEXTURE_DATA_H\n#define TEXTURE_DATA_H\n\n"
     header_content += f"#include <stdint.h>\n\n"
-    header_content += f"// Texture generated from image\n"
-    header_content += f"#define TEXTURE_WIDTH {width}\n"
-    header_content += f"#define TEXTURE_HEIGHT {height}\n"
-    header_content += f"uint8_t texture[TEXTURE_WIDTH * TEXTURE_HEIGHT] = {{\n"
+    header_content += f"#define texWidth {width}\n"
+    header_content += f"#define texHeight {height}\n"
+    header_content += f"#define NUM_TEXTURES {num_textures}\n"
+    header_content += f"uint8_t texture[NUM_TEXTURES][texWidth * texHeight] = {{\n"
 
-    # Add texture values to the header file
-    for i, color in enumerate(texture):
-        if i % width == 0:
-            header_content += "\n    "
-        header_content += f"{color}, "
-    header_content = header_content.rstrip(", ")
-    header_content += "\n};\n\n"
-    header_content += f"#endif // TEXTURE_H\n"
+    # Add each texture's data to the header file
+    for i, texture in enumerate(textures):
+        header_content += f"    {{  // Texture {i}\n        "
+        for j, color in enumerate(texture):
+            if j % width == 0 and j != 0:
+                header_content += "\n        "
+            header_content += f"{color}, "
+        header_content = header_content.rstrip(", ")
+        header_content += "\n    },\n"
+
+    header_content += "};\n\n"
+    header_content += f"#endif // TEXTURE_DATA_H\n"
 
     # Save to file
     with open(file_name, 'w') as f:
         f.write(header_content)
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python generate_texture.py <input_image.png>")
-        return
+    # Define the output header file name
+    output_file = "textures.h"
+    texture_size = (32, 32)  # Define a fixed texture size (e.g., 32x32)
 
-    image_path = sys.argv[1]
-    output_file = os.path.splitext(os.path.basename(image_path))[0] + "_texture.h"
+    # Generate textures from the predefined list of images
+    textures = []
+    for image_path in image_files:
+        if os.path.exists(image_path):
+            print(f"Processing {image_path}...")
+            texture = generate_texture_from_image(image_path, texture_size)
+            textures.append(texture)
+        else:
+            print(f"Warning: {image_path} not found. Using a blank texture.")
+            textures.append([0] * (texture_size[0] * texture_size[1]))  # Blank texture
 
-    width, height, texture = generate_texture_from_image(image_path)
-    save_texture_to_header(output_file, width, height, texture)
-
+    # Save all textures to a single header file
+    save_textures_to_header(output_file, textures, texture_size)
     print(f"Texture header file generated: {output_file}")
 
 if __name__ == "__main__":
