@@ -84,7 +84,7 @@ def save_textures_to_header(file_name, textures, texture_size):
 
     # Add each texture's data to the header file
     for i, texture in enumerate(textures):
-        header_content += f"    {{  // Texture {i}\n        "
+        header_content += f"    {{  // Texture {image_files[i]}\n        "
         for j, color in enumerate(texture):
             if j % width == 0 and j != 0:
                 header_content += "\n        "

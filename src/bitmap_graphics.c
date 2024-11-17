@@ -456,7 +456,27 @@ void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
                 RIA.rw0 = color_high;
             }
         }
-    } else {
+    
+        
+    } else if (bpp_mode == 3) { // 8bpp
+        uint16_t row_addr;
+                
+        // Loop through each row
+        for (uint16_t j = 0; j < h; j++) {
+            // Calculate the starting address of the row
+            row_addr = canvas_w * (y +j) + x;
+            
+            // Set the initial address and step for the row
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+            // Fill the row with the color
+            for (uint16_t i = 0; i < w; i++) {
+                RIA.rw0 = color;
+            }
+        }
+    }
+    else {
         // Fallback to the original implementation for other bpp modes
         for (uint16_t i = x; i < (x + w); i++) {
             for (uint16_t j = y; j < (y + h); j++) {
