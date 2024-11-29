@@ -429,19 +429,51 @@ void print_map() {
     }
 }
 
+void drawTexture() {
+    // Loop through the screen's height
+    for (uint16_t y = 0; y < SCREEN_HEIGHT; y++) {
+        // Compute the corresponding Y coordinate in the texture
+        uint8_t texY = y % texHeight;
+
+        // Compute the base address of the current screen row
+        uint16_t row_addr = y * SCREEN_WIDTH;
+
+        // Set the starting address for the row
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+        // Loop through the screen's width
+        for (uint16_t x = 0; x < SCREEN_WIDTH; x++) {
+            // Compute the corresponding X coordinate in the texture
+            uint8_t texX = x % texWidth;
+
+            // Compute the texture index
+            uint16_t texIndex = (texY * texWidth) + texX;
+
+            // Retrieve the color from the texture
+            uint8_t color = texture[0][texIndex];
+
+            // Write the color to the screen buffer
+            RIA.rw0 = color;
+        }
+    }
+}
+
+
+
 void draw_ui() {
-  // draw_rect(COLOR_FROM_RGB8(50, 50, 50), 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1); // draw frame
-  // draw_rect(COLOR_FROM_RGB8(50, 50, 50), xOffset, yOffset, w, h); 
-  draw_rect(LIGHT_GRAY, 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1); // draw frame
+  // draw_rect(LIGHT_GRAY, 0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1); // draw frame
   // draw_rect(LIGHT_GRAY, xOffset, yOffset, w, h); 
-  fill_rect(BLACK, 5,110, 11 * 5, 8);
-  set_cursor(5, 110);
-  sprintf(*buf," step: %i ", movementStep);
-  draw_string(*buf);
+  // fill_rect(BLACK, 5,110, 11 * 5, 8);
+  // set_cursor(5, 110);
+  // sprintf(*buf," step: %i ", movementStep);
+  // draw_string(*buf);
 }
 
 // Function to draw the world map using the draw_rect function
 void draw_map() {
+
+    // fill_rect_fast (BLACK, 0, 0, mapWidth * TILE_SIZE, mapHeight * TILE_SIZE); // draw frame
 
     for (int i = 0; i < mapHeight; i++) {
         for (int j = 0; j < mapWidth; j++) {
@@ -462,14 +494,12 @@ void draw_map() {
             }
             
             // Draw a wall tile (represented by a white rectangle)
-            if (wireMode) {
-              draw_pixel(color, i * TILE_SIZE, j * TILE_SIZE);
-            } else {
               draw_rect(color, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
+            } else {
+              draw_rect(BLACK, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
             }
-          } 
-        }
-    }
+        } 
+      }
 } 
 
 void draw_player(){
@@ -568,6 +598,8 @@ int16_t main() {
 
 
     set_text_color(color(WHITE,bpp==8));
+
+    drawTexture();
 
     draw_ui();
 
