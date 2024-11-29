@@ -4,14 +4,14 @@ import os
 
 # Define your predefined list of image files
 image_files = [
-    "greystone32x32.png",        # Texture 0
-    "greystone32x32dark.png",         # Texture 1
-    "redbrick32x32.png",        # Texture 2
-    "redbrick32x32dark.png",        # Texture 3
-    "bluestone32x32.png",        # Texture 4
-    "bluestone32x32dark.png",        # Texture 5
-    "colorstone32x32.png",         # Texture 6
-    "colorstone32x32dark.png"           # Texture 7
+    "greystone16x16.png",        # Texture 0
+    "greystone16x16dark.png",         # Texture 1
+    "redbrick16x16.png",        # Texture 2
+    "redbrick16x16dark.png",        # Texture 3
+    "bluestone16x16.png",        # Texture 4
+    "bluestone16x16dark.png",        # Texture 5
+    "colorstone16x16.png",         # Texture 6
+    "colorstone16x16dark.png"           # Texture 7
 ]
 
 # Generate the 256-color ANSI palette
@@ -102,7 +102,7 @@ def save_textures_to_header(file_name, textures, texture_size):
 def main():
     # Define the output header file name
     output_file = "textures.h"
-    texture_size = (32, 32)  # Define a fixed texture size (e.g., 32x32)
+    texture_size = (16, 16)  # Define a fixed texture size (e.g., 16x16)
 
     # Generate textures from the predefined list of images
     textures = []

@@ -15,10 +15,10 @@
 
 #define mapWidth 20
 #define mapHeight 18
-#define SCREEN_WIDTH 240 
-#define SCREEN_HEIGHT 124 
-#define WINDOW_WIDTH 120
-#define WINDOW_HEIGTH 64
+#define SCREEN_WIDTH 320 
+#define SCREEN_HEIGHT 180 
+#define WINDOW_WIDTH 96
+#define WINDOW_HEIGTH 54
 #define TILE_SIZE 2
 #define SCALE 2
 #define MIN_SCALE 8
@@ -44,11 +44,13 @@ char *buf[] = {"                                                                
 uint16_t prevPlayerX, prevPlayerY;
 
 int8_t currentStep = 1;
-int8_t movementStep = 6;
+int8_t movementStep = 6; 
 uint8_t currentScale = SCALE;
 
-uint8_t xOffset = SCREEN_WIDTH  / (SCALE * 2);
-uint8_t yOffset = SCREEN_HEIGHT / (SCALE * 2);
+
+
+uint8_t xOffset = (uint8_t)((SCREEN_WIDTH - WINDOW_WIDTH * 2) / 2);
+uint8_t yOffset = (uint8_t)((SCREEN_HEIGHT - WINDOW_HEIGTH * 2) / 2);
 
 
 const uint16_t w = WINDOW_WIDTH;
@@ -135,9 +137,35 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
+void drawBufferDouble() {
+    // Loop through each row
+    for (uint8_t j = 0; j < h; j++) {
+        // Calculate the starting address of the row (scaled for 2x height)
+        uint16_t row_addr = (SCREEN_WIDTH * (yOffset + (j << 1))) + xOffset;
+
+        // Draw the 2x2 pixel blocks
+        for (uint8_t i = 0; i < w; i++) {
+            // Set the address for the first row of the block
+            RIA.addr0 = row_addr + (i << 1); // Each pixel is 2 bytes in 16bpp
+            RIA.step0 = 1;                  // Move 2 bytes per write in 16bpp mode
+
+            // Write 2 horizontal pixels
+            uint16_t color = buffer[j][i];
+            RIA.rw0 = color; // Top-left pixel
+            RIA.rw0 = color; // Top-right pixel
+
+            // Set the address for the second row of the block
+            RIA.addr0 = row_addr + SCREEN_WIDTH + (i << 1);
+
+            // Write 2 horizontal pixels for the second row
+            RIA.rw0 = color; // Bottom-left pixel
+            RIA.rw0 = color; // Bottom-right pixel
+        }
+    }
+}
 
 
-void drawBuffer() {
+void drawBufferReqular() {
   // Loop through each row
   for (uint8_t j = 0; j < h; j++) {
       // Calculate the starting address of the row
@@ -225,17 +253,12 @@ int raycastFP()
   for(uint8_t x = 0; x < w; x += currentStep)
   {
     
-    // qFP16_t cameraX = qFP16_Sub(qFP16_Mul(qFP16_IntToFP(x << 1), invW), one);
     qFP16_t cameraX = cameraXValues[currentRotStep][x];
-    // printf("cameraX: %s\n", qFP16_FPToA(cameraX, ans, 4));
-    // qFP16_t rayDirX = qFP16_Add(qFP16_Mul(planeX, cameraX), dirX);
-    // qFP16_t rayDirY = qFP16_Add(qFP16_Mul(planeY, cameraX), dirY);
+
     qFP16_t rayDirX = rayDirXValues[currentRotStep][x];
     qFP16_t rayDirY = rayDirYValues[currentRotStep][x];
-    // printf("rayDirX: %s\n", qFP16_FPToA(rayDirX, ans, 4));
-    // printf("rayDirY: %s\n", qFP16_FPToA(rayDirY, ans, 4));
 
-    // printf("x: %i, cameraX: %f\n", x, cameraX);
+
     //which box of the map we're in
     int16_t mapX = (int16_t)qFP16_FPToInt(posX);
     int16_t mapY = (int16_t)qFP16_FPToInt(posY);
@@ -257,13 +280,10 @@ int raycastFP()
     // Division through zero is prevented, even though technically that's not
     // needed in C++ with IEEE 754 floating point16_t values.
     
-    // printf("fdeltaDistX: %i, fdeltaDistY: %i\n", (int)(fdeltaDistX*1000), (int)(fdeltaDistY*1000));
 
   
     qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
     qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
-    // printf("deltaDistX: %s\n", qFP16_FPToA(deltaDistX, ans, 4));
-    // printf("deltaDistY: %s\n", qFP16_FPToA(deltaDistY, ans, 4));
 
     qFP16_t perpWallDist;
 
@@ -300,14 +320,12 @@ int raycastFP()
       //jump to next map square, either in x-direction, or in y-direction
       if(sideDistX < sideDistY)
       {
-        // fsideDistX += fdeltaDistX;
         sideDistX = qFP16_Add(sideDistX, deltaDistX);
         mapX += stepX;
         side = 0;
       }
       else
       {
-        // fsideDistY += fdeltaDistY;
         sideDistY = qFP16_Add(sideDistY, deltaDistY);
         mapY += stepY;
         side = 1;
@@ -330,76 +348,9 @@ int raycastFP()
     if (lineHeight > h) lineHeight = h;
     
     // //choose wall color
-    // ColorRGBA color;
-    // uint8_t r, g, b;
-    // uint16_t wallColor, color = WHITE;
+
     uint8_t color8, color;
-    // switch(worldMap[mapX][mapY])
-    // {
-    //   case 1: 
-    //     // r = mapValue(lineHeight, 2, h, 150, 255);
-    //     // r = 150 + lineHeight;
-    //     // g = 40;
-    //     // b = 40;
-    //     if (side == 0)
-    //       color8 = mapValue(lineHeight, 2, h, 196, 201);
-    //     else 
-    //       color8 = mapValue(lineHeight, 2, h, 124, 129);
-    //     break; //red
-    //   case 2:
-    //     // r = 41; 
-    //     // g = mapValue(lineHeight, 2, h, 150, 255);
-    //     // g = 150 + lineHeight;
-    //     // b = 41;
-    //     if (side == 0)
-    //       color8 = mapValue(lineHeight, 2, h, 118, 123);
-    //     else
-    //       color8 = mapValue(lineHeight, 2, h, 40, 45);
-    //     break; //green
-    //   case 3:
-    //     // r = 40;
-    //     // g = mapValue(lineHeight, 2, h, 120, 227);
-    //     // b = mapValue(lineHeight, 2, h, 150, 255);
-    //     // g = 120 + lineHeight;
-    //     // b = 150 + lineHeight;
-    //     if (side == 0)
-    //       color8 = mapValue(lineHeight, 2, h, 28, 33);
-    //     else
-    //       color8 = mapValue(lineHeight, 2, h, 17, 21);
-    //     break; //blue
-    //   case 4: 
-    //     // r = g = b = mapValue(lineHeight, 2, h, 150, 255);
-    //     // r = g = b = 180 + lineHeight;
-    //     if (side == 0) 
-    //       color8 = mapValue(lineHeight, 2, h, 244, 255);
-    //     else 
-    //       color8 = mapValue(lineHeight, 2, h-20, 235, 243);
-    //     break; //white
-    //   case 5: 
-    //     // r = mapValue(lineHeight, 2, h, 150, 255);
-    //     // g = mapValue(lineHeight, 2, h, 150, 255);
-    //     // r = 180 + lineHeight;
-    //     // g = 180 + lineHeight;
-    //     // b = 40;
-    //     if (side == 0)
-    //       color8 = mapValue(lineHeight, 2, h, 220, 225);
-    //     else
-    //       color8 = mapValue(lineHeight, 2, h, 214, 219);
-    //     break; //yellow
-    // }
-
-    // printf("color: %i\n", color);
-    // printf("r: %i, g: %i, b: %i\n", r, g, b);
-    // //give x and y sides different brightness
-    // if(side == 1) {
-    //   r = r - 20;
-    //   g = g - 20;
-    //   b = g - 20;
-    // }
-
-    // printf("r: %i, g: %i, b: %i\n", r, g, b);
-
-    // wallColor = COLOR_FROM_RGB8(r, g, b);
+    
 
     int8_t drawStart = -lineHeight / 2 + h / 2;
     if(drawStart < 0) drawStart = 0;
@@ -415,57 +366,14 @@ int raycastFP()
         for (i = 0; i < currentStep; i++) {
           buffer[y][x+i] = color;
         }
-        // if (currentStep == 2) {
-        //   buffer[y][x+1] = color;
-        // } else {
-        //   buffer[y][x+1] = color;
-        //   buffer[y][x+2] = color;
-        //   buffer[y][x+3] = color;
-        //   buffer[y][x+4] = color;
-        //   buffer[y][x+5] = color;
-        //   buffer[y][x+6] = color;
-        //   buffer[y][x+7] = color;
-        //   buffer[y][x+8] = color;
-        //   buffer[y][x+9] = color;
-        // }
+        
       }
-      // color = color8;
-      // for (uint8_t y = drawStart; y < drawEnd; y++) {
-      //   if (currentStep == 2) {
-      //     buffer[y][x] = color;
-      //     buffer[y][x+1] = color;
-      //   } else {
-      //     buffer[y][x] = color;
-      //     buffer[y][x+1] = color;
-      //     buffer[y][x+2] = color;
-      //     buffer[y][x+3] = color;
-      //     buffer[y][x+4] = color;
-      //     buffer[y][x+5] = color;
-      //     buffer[y][x+6] = color;
-      //     buffer[y][x+7] = color;
-      //     buffer[y][x+8] = color;
-      //     buffer[y][x+9] = color;
-      //   }
-      // }
+     
       for (uint8_t y = drawEnd; y < h; y++) {
         color = floorColors[y];
         for (i = 0; i < currentStep; i++) {
           buffer[y][x+i] = color;
         }
-        // buffer[y][x] = color;
-        // if (currentStep == 2) {          
-        //   buffer[y][x+1] = color;
-        // } else {
-        //   buffer[y][x+1] = color;
-        //   buffer[y][x+2] = color;
-        //   buffer[y][x+3] = color;
-        //   buffer[y][x+4] = color;
-        //   buffer[y][x+5] = color;
-        //   buffer[y][x+6] = color;
-        //   buffer[y][x+7] = color;
-        //   buffer[y][x+8] = color;
-        //   buffer[y][x+9] = color;
-        // }
       }
 
       //texturing calculations
@@ -516,7 +424,7 @@ int raycastFP()
     // show progress
     // draw_pixel(color, x + xOffset, yOffset - 1);
   }
-  drawBuffer();
+  drawBufferDouble();
   // clear progress
   // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
   return 0;
