@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <time.h>
 #include "colors.h"
 #include "usb_hid_keys.h"
 // #include "bitmap_graphics_db.h"
@@ -58,7 +59,7 @@ const uint16_t h = WINDOW_HEIGTH;
 
 bool wireMode = false;
 
-uint8_t buffer[WINDOW_HEIGTH][WINDOW_WIDTH];
+uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
 
 
@@ -145,12 +146,15 @@ void drawBufferDouble() {
 
         // Draw the 2x2 pixel blocks
         for (uint8_t i = 0; i < w; i++) {
+            // Convert 2D index to 1D index
+            uint16_t bufferIndex = j * WINDOW_WIDTH + i;
+
             // Set the address for the first row of the block
             RIA.addr0 = row_addr + (i << 1); // Each pixel is 2 bytes in 16bpp
             RIA.step0 = 1;                  // Move 2 bytes per write in 16bpp mode
 
             // Write 2 horizontal pixels
-            uint16_t color = buffer[j][i];
+            uint16_t color = buffer[bufferIndex]; // Access single-dimensional buffer
             RIA.rw0 = color; // Top-left pixel
             RIA.rw0 = color; // Top-right pixel
 
@@ -165,28 +169,28 @@ void drawBufferDouble() {
 }
 
 
-void drawBufferReqular() {
-  // Loop through each row
-  for (uint8_t j = 0; j < h; j++) {
-      // Calculate the starting address of the row
-      uint16_t row_addr = ((SCREEN_WIDTH) * (yOffset + j)) + (xOffset);
+void drawBufferRegular() {
+    // Loop through each row
+    for (uint8_t j = 0; j < h; j++) {
+        // Calculate the starting address of the row
+        uint16_t row_addr = ((SCREEN_WIDTH) * (yOffset + j)) + (xOffset);
 
-      // Set the initial address and step for the row
-      RIA.addr0 = row_addr;
-      RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+        // Set the initial address and step for the row
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
 
-      // Fill the row with the color
-      for (uint8_t i = 0; i < w; i+=8) {
-          RIA.rw0 = buffer[j][i] ;
-          RIA.rw0 = buffer[j][i+1] ;
-          RIA.rw0 = buffer[j][i+2] ;
-          RIA.rw0 = buffer[j][i+3] ;
-          RIA.rw0 = buffer[j][i+4] ;
-          RIA.rw0 = buffer[j][i+5] ;
-          RIA.rw0 = buffer[j][i+6] ;
-          RIA.rw0 = buffer[j][i+7] ;
-      }
-  }
+        // Fill the row with the color
+        for (uint8_t i = 0; i < w; i += 8) {
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 1];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 2];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 3];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 4];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 5];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 6];
+            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 7];
+        }
+    }
 }
 
 void precalculateRotations() {
@@ -242,193 +246,157 @@ void precalculateRotations() {
 
 }
 
-
-
 int raycastFP()
 {
   // Precompute common values
   qFP16_t invW = qFP16_Div(one, qFP16_IntToFP(w));
-  // qFP16_t invH = qFP16_Div(one, qFP16_IntToFP(h));
   
-  for(uint8_t x = 0; x < w; x += currentStep)
-  {
-    
+  for (uint8_t x = 0; x < w; x += currentStep) {
     qFP16_t cameraX = cameraXValues[currentRotStep][x];
-
     qFP16_t rayDirX = rayDirXValues[currentRotStep][x];
     qFP16_t rayDirY = rayDirYValues[currentRotStep][x];
 
-
-    //which box of the map we're in
     int16_t mapX = (int16_t)qFP16_FPToInt(posX);
     int16_t mapY = (int16_t)qFP16_FPToInt(posY);
 
-    //length of ray from current position to next x or y-side
-    qFP16_t sideDistX;
-    qFP16_t sideDistY;
-
-    
-    //length of ray from one x or y-side to next x or y-side
-    //these are derived as:
-    //deltaDistX = sqrt(1 + (rayDirY * rayDirY) / (rayDirX * rayDirX))
-    //deltaDistY = sqrt(1 + (rayDirX * rayDirX) / (rayDirY * rayDirY))
-    //which can be simplified to f_abs(|rayDir| / rayDirX) and f_abs(|rayDir| / rayDirY)
-    //where |rayDir| is the length of the vector (rayDirX, rayDirY). Its length,
-    //unlike (dirX, dirY) is not 1, however this does not matter, only the
-    //ratio between deltaDistX and deltaDistY matters, due to the way the DDA
-    //currentStepping further below works. So the values can be computed as below.
-    // Division through zero is prevented, even though technically that's not
-    // needed in C++ with IEEE 754 floating point16_t values.
-    
-
-  
     qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
     qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
 
-    qFP16_t perpWallDist;
+    qFP16_t sideDistX, sideDistY;
+    int8_t stepX, stepY;
 
-    //what direction to step in x or y-direction (either +1 or -1)
-    int8_t stepX;
-    int8_t stepY;
+    // Precompute initial `sideDistX` and `sideDistY`
+    if (rayDirX < 0) {
+        stepX = -1;
+        sideDistX = qFP16_Mul(qFP16_Sub(posX, qFP16_IntToFP(mapX)), deltaDistX);
+    } else {
+        stepX = 1;
+        sideDistX = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapX), one), posX), deltaDistX);
+    }
+    if (rayDirY < 0) {
+        stepY = -1;
+        sideDistY = qFP16_Mul(qFP16_Sub(posY, qFP16_IntToFP(mapY)), deltaDistY);
+    } else {
+        stepY = 1;
+        sideDistY = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapY), one), posY), deltaDistY);
+    }
 
-    int8_t hit = 0; //was there a wall hit?
-    int8_t side; //was a NS or a EW wall hit?
-    //calculate step and initial sideDist
-    if(rayDirX < 0)
-    {
-      stepX = -1;
-      sideDistX = qFP16_Mul(qFP16_Sub(posX, qFP16_IntToFP(mapX)), deltaDistX);
+    // DDA loop to find wall intersection
+    int8_t hit = 0, side;
+    while (!hit) {
+        if (sideDistX < sideDistY) {
+            sideDistX = qFP16_Add(sideDistX, deltaDistX);
+            mapX += stepX;
+            side = 0;
+        } else {
+            sideDistY = qFP16_Add(sideDistY, deltaDistY);
+            mapY += stepY;
+            side = 1;
+        }
+        if (worldMap[mapX][mapY] > 0) hit = 1;
     }
-    else
-    {
-      stepX = 1;
-      sideDistX = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapX), one), posX), deltaDistX);
-    }
-    if(rayDirY < 0)
-    {
-      stepY = -1;
-      sideDistY = qFP16_Mul(qFP16_Sub(posY, qFP16_IntToFP(mapY)), deltaDistY);
-    }
-    else
-    {
-      stepY = 1;
-      sideDistY = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapY), one), posY), deltaDistY);
-    }
-    //perform DDA
-    while(hit == 0)
-    {
-      //jump to next map square, either in x-direction, or in y-direction
-      if(sideDistX < sideDistY)
-      {
-        sideDistX = qFP16_Add(sideDistX, deltaDistX);
-        mapX += stepX;
-        side = 0;
-      }
-      else
-      {
-        sideDistY = qFP16_Add(sideDistY, deltaDistY);
-        mapY += stepY;
-        side = 1;
-      }
-      //Check if ray has hit a wall
-      if(worldMap[mapX][mapY] > 0) hit = 1;
-    }
-    //Calculate distance projected on camera direction. This is the shortest distance from the point16_t where the wall is
-    //hit to the camera plane. Euclidean to center camera point16_t would give fisheye effect!
-    //This can be computed as (mapX - posX + (1 - stepX) / 2) / rayDirX for side == 0, or same formula with Y
-    //for size == 1, but can be simplified to the code below thanks to how sideDist and deltaDist are computed:
-    //because they were left scaled to |rayDir|. sideDist is the entire length of the ray above after the multiple
-    //steps, but we subtract deltaDist once because one step more into the wall was taken above.
-    
-    if(side == 0) perpWallDist = qFP16_Sub(sideDistX, deltaDistX);
-    else          perpWallDist = qFP16_Sub(sideDistY, deltaDistY);
 
-    //Calculate height of line to draw on screen
+    // Compute perpendicular wall distance
+    qFP16_t perpWallDist = (side == 0) ? qFP16_Sub(sideDistX, deltaDistX) : qFP16_Sub(sideDistY, deltaDistY);
     uint16_t lineHeight = (uint16_t)qFP16_FPToInt(qFP16_Div(qFP16_IntToFP(h), perpWallDist));
     if (lineHeight > h) lineHeight = h;
-    
-    // //choose wall color
 
-    uint8_t color8, color;
-    
-
-    int8_t drawStart = -lineHeight / 2 + h / 2;
-    if(drawStart < 0) drawStart = 0;
+    int8_t drawStart = (-lineHeight >> 1) + (h >> 1);
+    if (drawStart < 0) drawStart = 0;
     uint8_t drawEnd = drawStart + lineHeight;
 
-    // uint16_t skyColor = COLOR_FROM_RGB8(52, 168, 235);
-    uint8_t skyColor = 14;
-    uint8_t i;
-
-    // for (uint8_t i = 1; i <= currentStep; i++){
-      color = skyColor;
-      for (uint8_t y = 0; y < drawStart; y++) {
-        for (i = 0; i < currentStep; i++) {
-          buffer[y][x+i] = color;
-        }
-        
-      }
-     
-      for (uint8_t y = drawEnd; y < h; y++) {
-        color = floorColors[y];
-        for (i = 0; i < currentStep; i++) {
-          buffer[y][x+i] = color;
-        }
-      }
-
-      //texturing calculations
-      uint8_t texNum = (worldMap[mapX][mapY] - 1) * 2 + side; //1 subtracted from it so that texture 0 can be used!
-
-      
-
-      // Calculate wallX
-      qFP16_t wallX;
-      if (side == 0) wallX = qFP16_Add(posY, qFP16_Mul(perpWallDist, rayDirY));
-      else           wallX = qFP16_Add(posX, qFP16_Mul(perpWallDist, rayDirX));
-
-      // Calculate fractional part using bitwise AND with the fixed-point fraction mask (assuming 16-bit fixed point)
-      wallX = wallX & 0xFFFF; // Equivalent to wallX - qFP16_Floor(wallX)
-
-      // x coordinate on the texture
-      uint8_t texX = (wallX * texWidth) >> 16; // qFP16_Mul(wallX, qFP16_Constant(texWidth))
-      if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) {
-          texX = texWidth - texX - 1;
-      }
-
-      // Precompute texPos step
-      // qFP16_t step = (texHeight << 16) / lineHeight; // 
-      qFP16_t step = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(lineHeight));
-      // Starting texture coordinate (simplified)
-      qFP16_t texPos = ((drawStart - (h >> 1) + (lineHeight >> 1)) * step);
-
-      // Precompute texture offset (optimized)
-      uint8_t texOffsetX = texX;
-      
-      // Loop through each pixel from drawStart to drawEnd
-      for (uint8_t y = drawStart; y < drawEnd; y++) {
-          // Get texY and increment texPos
-          uint8_t texY = (texPos >> 16) & (texHeight - 1);
-          texPos += step;
-
-          // Fetch the color from texture memory
-          color = texture[texNum][(texY << 5) + texOffsetX];
-
-          // Assign color to buffer (could optimize with loop unrolling or SIMD if needed)
-          // buffer[y][x] = color;
-          for (i = 0; i < currentStep; i++) {
-            buffer[y][x+i] = color;
-          }
-      }
+    // Draw ceiling
+    uint8_t i, color = 14;
+    uint16_t fillStart;
+    // for (uint8_t y = 0; y < drawStart; y++) {
+    //     // for (i = 0; i < currentStep; i++) 
+    //     fillStart = y * WINDOW_WIDTH;
+    //     if (currentStep == 1) {
+    //         buffer[fillStart + x] = color;
+    //     } else {
+    //         buffer[fillStart + x] = color;
+    //         buffer[fillStart + x + 1] = color;
+    //         buffer[fillStart + x + 2] = color;
+    //         buffer[fillStart + x + 3] = color;
+    //     }
     // }
 
-    // show progress
-    // draw_pixel(color, x + xOffset, yOffset - 1);
+    if (drawStart > 0) {
+    for (uint8_t y = 0; y < drawStart; ++y) {
+        uint8_t* bufPtr = &buffer[y * w + x];
+        // for (uint8_t i = 0; i < currentStep; ++i) {
+        if (currentStep == 1) bufPtr[i] = color; // skyColor
+        else {
+          bufPtr[i] = color;
+          bufPtr[i+1] = color;
+          bufPtr[i+2] = color;
+          bufPtr[i+3] = color;
+          bufPtr[i+4] = color;
+          bufPtr[i+5] = color;
+        }
+        
+    }
+}
+
+    // if (drawStart > 0) {
+    // for (uint8_t y = 0; y < drawStart; ++y) {
+    //     uint8_t* bufPtr = &buffer[y * w + x];
+    //     for (uint8_t i = 0; i < currentStep; ++i) {
+    //         bufPtr[i] = 14; // skyColor
+    //     }
+    // }
+// }
+
+    // Draw wall
+    uint8_t texNum = ((worldMap[mapX][mapY] - 1) << 1) + side;
+    qFP16_t wallX = (side == 0) ? qFP16_Add(posY, qFP16_Mul(perpWallDist, rayDirY)) : qFP16_Add(posX, qFP16_Mul(perpWallDist, rayDirX));
+    wallX = wallX & 0xFFFF; // Fractional part only
+    uint8_t texX = (wallX << 5) >> 16;
+    if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) texX = texWidth - texX - 1;
+
+    qFP16_t step = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(lineHeight));
+    qFP16_t texPos = ((drawStart - (h >> 1) + (lineHeight >> 1)) * step);
+
+    for (uint8_t y = drawStart; y < drawEnd; ++y) {
+      uint8_t texY = (texPos >> 16) & (texHeight - 1);
+      texPos += step;
+      color = texture[texNum][(texY << 5) + texX];
+      uint8_t* bufPtr = &buffer[y * w + x];
+      if (currentStep == 1) bufPtr[i] = color; // skyColor
+      else {
+          bufPtr[i] = color;
+          bufPtr[i+1] = color;
+          bufPtr[i+2] = color;
+          bufPtr[i+3] = color;
+          bufPtr[i+4] = color;
+          bufPtr[i+5] = color;
+        }
   }
+
+    // Draw floor
+    // Floor
+    for (uint8_t y = drawEnd; y < h; ++y) {
+        uint8_t* bufPtr = &buffer[y * w + x];
+        color = floorColors[y];
+        if (currentStep == 1) bufPtr[i] = color; // skyColor
+        else {
+          bufPtr[i] = color;
+          bufPtr[i+1] = color;
+          bufPtr[i+2] = color;
+          bufPtr[i+3] = color;
+          bufPtr[i+4] = color;
+          bufPtr[i+5] = color;
+        }
+    }
+  }
+
   drawBufferDouble();
+  // drawBufferRegular();
   // clear progress
   // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
   return 0;
 }
+
 
 
 void print_map() {
@@ -617,15 +585,15 @@ int16_t main() {
 
         if (gamestate == GAMESTATE_IDLE) timer++;
 
-        if (timer == 255 && currentStep == 2) { 
-            currentStep = 1;
-            draw_map();
-            draw_ui();
-            handleCalculation();
-        }
+        // if (timer == 255 && currentStep == 2) { 
+        //     currentStep = 1;
+        //     draw_map();
+        //     draw_ui();
+        //     handleCalculation();
+        // }
 
         if (timer == 64 && currentStep > 2) { 
-            currentStep = 2;
+            currentStep = 1;
             draw_map();
             draw_ui();
             handleCalculation();
@@ -702,16 +670,16 @@ int16_t main() {
                     posY = qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed));
                 }
                 if (key(KEY_EQUAL)) {
-                    if (movementStep < 10) {
-                      movementStep += 2;
-                      draw_ui();
-                    }
+                    // if (movementStep < 10) {
+                    //   movementStep += 2;
+                    //   draw_ui();
+                    // }
                 }
                 if (key(KEY_MINUS)) {
-                  if (movementStep > 4) {
-                    movementStep -= 2;
-                    draw_ui();
-                  }
+                  // if (movementStep > 4) {
+                  //   movementStep -= 2;
+                  //   draw_ui();
+                  // }
                   
                 }
 
