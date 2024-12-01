@@ -45,7 +45,7 @@ char *buf[] = {"                                                                
 uint16_t prevPlayerX, prevPlayerY;
 
 int8_t currentStep = 1;
-int8_t movementStep = 6; 
+int8_t movementStep = 4; 
 uint8_t currentScale = SCALE;
 
 
@@ -58,6 +58,7 @@ const uint16_t w = WINDOW_WIDTH;
 const uint16_t h = WINDOW_HEIGTH; 
 
 bool wireMode = false;
+bool bigMode = true;
 
 uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
@@ -71,12 +72,13 @@ uint8_t gamestate_prev = 1;
 #define GAMESTATE_MOVING 2
 #define GAMESTATE_CALCULATING 3
 
-#define ROTATION_STEPS 24
+#define ROTATION_STEPS 20
 
 qFP16_t dirXValues[ROTATION_STEPS];
 qFP16_t dirYValues[ROTATION_STEPS];
 qFP16_t planeXValues[ROTATION_STEPS];
 qFP16_t planeYValues[ROTATION_STEPS];
+qFP16_t texStepValues[WINDOW_HEIGTH+1];
 qFP16_t cameraXValues[ROTATION_STEPS][WINDOW_WIDTH];
 qFP16_t rayDirXValues[ROTATION_STEPS][WINDOW_WIDTH];
 qFP16_t rayDirYValues[ROTATION_STEPS][WINDOW_WIDTH];
@@ -105,21 +107,21 @@ int16_t worldMap[mapHeight][mapWidth]=
 {
   {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
   {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,0,4,0,0,0,2,2,2,2,2,0,0,3,0,3,0,3,0,1},
-  {1,0,4,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
-  {1,0,4,0,0,0,2,0,0,0,2,0,0,3,0,0,0,3,0,1},
-  {1,0,4,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
-  {1,0,4,0,0,0,2,2,0,2,2,0,0,3,0,3,0,3,0,1},
+  {1,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+  {1,0,2,0,0,0,2,2,2,2,2,0,0,3,0,3,0,3,0,1},
+  {1,0,2,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
+  {1,0,2,0,0,0,2,0,0,0,2,0,0,3,0,0,0,3,0,1},
+  {1,0,2,0,0,0,2,0,0,0,2,0,0,0,0,0,0,0,0,1},
+  {1,0,2,0,0,0,2,2,0,2,2,0,0,3,0,3,0,3,0,1},
   {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
   {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,4,4,4,4,0,1},
-  {1,4,0,4,0,0,0,0,4,0,0,0,0,0,4,0,0,0,0,1},
-  {1,4,0,0,0,0,2,0,4,0,4,4,4,0,4,0,0,4,0,1},
-  {1,4,0,4,0,0,0,0,4,0,0,0,4,0,4,0,0,4,0,1},
-  {1,4,0,4,4,4,4,4,4,0,0,0,4,0,4,0,0,4,0,1},
-  {1,4,0,0,0,0,0,0,0,0,4,4,4,0,4,0,0,4,0,1},
-  {1,4,4,4,4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,1},
+  {1,2,2,2,2,2,2,2,2,0,0,0,0,0,2,2,2,2,0,1},
+  {1,2,0,2,0,0,0,0,2,0,0,0,0,0,2,0,0,0,0,1},
+  {1,2,0,0,0,0,2,0,2,0,2,2,2,0,2,0,0,2,0,1},
+  {1,2,0,2,0,0,0,0,2,0,0,0,2,0,2,0,0,2,0,1},
+  {1,2,0,2,2,2,2,2,2,0,0,0,2,0,2,0,0,2,0,1},
+  {1,2,0,0,0,0,0,0,0,0,2,2,2,0,2,0,0,2,0,1},
+  {1,2,2,2,2,2,2,2,2,0,0,0,0,0,0,0,0,0,0,1},
   {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
 
@@ -139,34 +141,97 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
 }
 
 void drawBufferDouble() {
+    RIA.step0 = 1; // Set step size once, as it does not change
+
     // Loop through each row
     for (uint8_t j = 0; j < h; j++) {
-        // Calculate the starting address of the row (scaled for 2x height)
-        uint16_t row_addr = (SCREEN_WIDTH * (yOffset + (j << 1))) + xOffset;
+        uint16_t row_addr = SCREEN_WIDTH * (yOffset + (j << 1)) + xOffset;
+        uint16_t bufferIndex = j * WINDOW_WIDTH;
 
-        // Draw the 2x2 pixel blocks
-        for (uint8_t i = 0; i < w; i++) {
-            // Convert 2D index to 1D index
-            uint16_t bufferIndex = j * WINDOW_WIDTH + i;
+        // Precompute the base row addresses
+        uint16_t row_addr_next = row_addr + SCREEN_WIDTH;
 
-            // Set the address for the first row of the block
-            RIA.addr0 = row_addr + (i << 1); // Each pixel is 2 bytes in 16bpp
-            RIA.step0 = 1;                  // Move 2 bytes per write in 16bpp mode
+        // Draw 8 2x2 pixel blocks in one iteration
+        for (uint8_t i = 0; i < w; i += 8) {
+            // Precompute addresses
+            uint16_t addr1 = row_addr + (i << 1);
+            uint16_t addr2 = row_addr_next + (i << 1);
 
-            // Write 2 horizontal pixels
-            uint16_t color = buffer[bufferIndex]; // Access single-dimensional buffer
-            RIA.rw0 = color; // Top-left pixel
-            RIA.rw0 = color; // Top-right pixel
+            // Block 1
+            uint16_t color1 = buffer[bufferIndex + i];
+            RIA.addr0 = addr1;
+            RIA.rw0 = color1;
+            RIA.rw0 = color1;
+            RIA.addr0 = addr2;
+            RIA.rw0 = color1;
+            RIA.rw0 = color1;
 
-            // Set the address for the second row of the block
-            RIA.addr0 = row_addr + SCREEN_WIDTH + (i << 1);
+            // Block 2
+            uint16_t color2 = buffer[bufferIndex + i + 1];
+            RIA.addr0 = addr1 + 2;
+            RIA.rw0 = color2;
+            RIA.rw0 = color2;
+            RIA.addr0 = addr2 + 2;
+            RIA.rw0 = color2;
+            RIA.rw0 = color2;
 
-            // Write 2 horizontal pixels for the second row
-            RIA.rw0 = color; // Bottom-left pixel
-            RIA.rw0 = color; // Bottom-right pixel
+            // Block 3
+            uint16_t color3 = buffer[bufferIndex + i + 2];
+            RIA.addr0 = addr1 + 4;
+            RIA.rw0 = color3;
+            RIA.rw0 = color3;
+            RIA.addr0 = addr2 + 4;
+            RIA.rw0 = color3;
+            RIA.rw0 = color3;
+
+            // Block 4
+            uint16_t color4 = buffer[bufferIndex + i + 3];
+            RIA.addr0 = addr1 + 6;
+            RIA.rw0 = color4;
+            RIA.rw0 = color4;
+            RIA.addr0 = addr2 + 6;
+            RIA.rw0 = color4;
+            RIA.rw0 = color4;
+
+            // Block 5
+            uint16_t color5 = buffer[bufferIndex + i + 4];
+            RIA.addr0 = addr1 + 8;
+            RIA.rw0 = color5;
+            RIA.rw0 = color5;
+            RIA.addr0 = addr2 + 8;
+            RIA.rw0 = color5;
+            RIA.rw0 = color5;
+
+            // Block 6
+            uint16_t color6 = buffer[bufferIndex + i + 5];
+            RIA.addr0 = addr1 + 10;
+            RIA.rw0 = color6;
+            RIA.rw0 = color6;
+            RIA.addr0 = addr2 + 10;
+            RIA.rw0 = color6;
+            RIA.rw0 = color6;
+
+            // Block 7
+            uint16_t color7 = buffer[bufferIndex + i + 6];
+            RIA.addr0 = addr1 + 12;
+            RIA.rw0 = color7;
+            RIA.rw0 = color7;
+            RIA.addr0 = addr2 + 12;
+            RIA.rw0 = color7;
+            RIA.rw0 = color7;
+
+            // Block 8
+            uint16_t color8 = buffer[bufferIndex + i + 7];
+            RIA.addr0 = addr1 + 14;
+            RIA.rw0 = color8;
+            RIA.rw0 = color8;
+            RIA.addr0 = addr2 + 14;
+            RIA.rw0 = color8;
+            RIA.rw0 = color8;
         }
     }
 }
+
 
 
 void drawBufferRegular() {
@@ -205,8 +270,12 @@ void precalculateRotations() {
 
     qFP16_t invW = qFP16_Div(one, qFP16_IntToFP(w));
 
+    for (uint8_t i = 0; i < WINDOW_HEIGTH+1; i++) {
+      texStepValues[i] = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(i));
+    }
+
     // Compute for right rotation (0.25 rad steps)
-    for (int i = 0; i < ROTATION_STEPS; i++) {
+    for (uint8_t i = 0; i < ROTATION_STEPS; i++) {
       printf(".");
       // Rotate right (counterclockwise by 0.25 rad)
       qFP16_t oldDirX = currentDirX;
@@ -242,6 +311,7 @@ void precalculateRotations() {
     dirYValues[0] =   dirY;
     planeXValues[0] = planeX;
     planeYValues[0] = planeY;
+
     printf("\nDone\n");
 
 }
@@ -259,8 +329,10 @@ int raycastFP()
     int16_t mapX = (int16_t)qFP16_FPToInt(posX);
     int16_t mapY = (int16_t)qFP16_FPToInt(posY);
 
-    qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
-    qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
+    // qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
+    // qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
+    qFP16_t deltaDistX = deltaDistXValues[currentRotStep][x];
+    qFP16_t deltaDistY = deltaDistYValues[currentRotStep][x];
 
     qFP16_t sideDistX, sideDistY;
     int8_t stepX, stepY;
@@ -298,7 +370,10 @@ int raycastFP()
 
     // Compute perpendicular wall distance
     qFP16_t perpWallDist = (side == 0) ? qFP16_Sub(sideDistX, deltaDistX) : qFP16_Sub(sideDistY, deltaDistY);
-    uint16_t lineHeight = (uint16_t)qFP16_FPToInt(qFP16_Div(qFP16_IntToFP(h), perpWallDist));
+    // uint16_t lineHeight = (uint16_t)qFP16_FPToInt(qFP16_Div(qFP16_IntToFP(h), perpWallDist));
+    uint8_t lineHeight = (uint8_t)((h << 4) / (perpWallDist >> 12));
+    // printf("lineHeight: %i, new: %i, %s\n", lineHeight, (int)((h << 4) / (perpWallDist >> 12)), qFP16_FPToA(perpWallDist, ans, 4));
+
     if (lineHeight > h) lineHeight = h;
 
     int8_t drawStart = (-lineHeight >> 1) + (h >> 1);
@@ -307,21 +382,6 @@ int raycastFP()
 
     // Draw ceiling
     uint8_t i, color = 14;
-    uint16_t fillStart;
-    // for (uint8_t y = 0; y < drawStart; y++) {
-    //     // for (i = 0; i < currentStep; i++) 
-    //     fillStart = y * WINDOW_WIDTH;
-    //     if (currentStep == 1) {
-    //         buffer[fillStart + x] = color;
-    //     } else {
-    //         buffer[fillStart + x] = color;
-    //         buffer[fillStart + x + 1] = color;
-    //         buffer[fillStart + x + 2] = color;
-    //         buffer[fillStart + x + 3] = color;
-    //     }
-    // }
-
-    if (drawStart > 0) {
     for (uint8_t y = 0; y < drawStart; ++y) {
         uint8_t* bufPtr = &buffer[y * w + x];
         // for (uint8_t i = 0; i < currentStep; ++i) {
@@ -331,21 +391,10 @@ int raycastFP()
           bufPtr[i+1] = color;
           bufPtr[i+2] = color;
           bufPtr[i+3] = color;
-          bufPtr[i+4] = color;
-          bufPtr[i+5] = color;
-        }
-        
+          // bufPtr[i+4] = color;
+          // bufPtr[i+5] = color;
+        }        
     }
-}
-
-    // if (drawStart > 0) {
-    // for (uint8_t y = 0; y < drawStart; ++y) {
-    //     uint8_t* bufPtr = &buffer[y * w + x];
-    //     for (uint8_t i = 0; i < currentStep; ++i) {
-    //         bufPtr[i] = 14; // skyColor
-    //     }
-    // }
-// }
 
     // Draw wall
     uint8_t texNum = ((worldMap[mapX][mapY] - 1) << 1) + side;
@@ -354,8 +403,14 @@ int raycastFP()
     uint8_t texX = (wallX << 5) >> 16;
     if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) texX = texWidth - texX - 1;
 
-    qFP16_t step = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(lineHeight));
-    qFP16_t texPos = ((drawStart - (h >> 1) + (lineHeight >> 1)) * step);
+    // qFP16_t step = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(lineHeight));
+    qFP16_t step = texStepValues[lineHeight];
+    // printf("step: %s, lineHeight: %i\n", qFP16_FPToA(step, ans, 4), lineHeight);
+    // qFP16_t texPos = ((drawStart - (h >> 1) + (lineHeight >> 1)) * step);
+    qFP16_t halfH =  qFP16_IntToFP(h >> 1);
+    qFP16_t halfLh =  qFP16_IntToFP(lineHeight >> 1);
+    
+    qFP16_t texPos =qFP16_Mul(qFP16_Add(qFP16_Sub(qFP16_IntToFP(drawStart), halfH), halfLh), step);
 
     for (uint8_t y = drawStart; y < drawEnd; ++y) {
       uint8_t texY = (texPos >> 16) & (texHeight - 1);
@@ -364,17 +419,19 @@ int raycastFP()
       uint8_t* bufPtr = &buffer[y * w + x];
       if (currentStep == 1) bufPtr[i] = color; // skyColor
       else {
-          bufPtr[i] = color;
-          bufPtr[i+1] = color;
-          bufPtr[i+2] = color;
-          bufPtr[i+3] = color;
-          bufPtr[i+4] = color;
-          bufPtr[i+5] = color;
-        }
-  }
+        bufPtr[i] = color;
+        bufPtr[i+1] = color;
+        color = texture[texNum][(texY << 5) + texX + 1];
+        bufPtr[i+2] = color;
+        bufPtr[i+3] = color;
+        // color = texture[texNum][(texY << 5) + texX + 2];
+        // bufPtr[i+4] = color;
+        // bufPtr[i+5] = color;
+      }
+    }
+    
 
     // Draw floor
-    // Floor
     for (uint8_t y = drawEnd; y < h; ++y) {
         uint8_t* bufPtr = &buffer[y * w + x];
         color = floorColors[y];
@@ -384,14 +441,13 @@ int raycastFP()
           bufPtr[i+1] = color;
           bufPtr[i+2] = color;
           bufPtr[i+3] = color;
-          bufPtr[i+4] = color;
-          bufPtr[i+5] = color;
+          // bufPtr[i+4] = color;
+          // bufPtr[i+5] = color;
         }
     }
   }
+  bigMode? drawBufferDouble() : drawBufferRegular();
 
-  drawBufferDouble();
-  // drawBufferRegular();
   // clear progress
   // draw_hline(COLOR_FROM_RGB8(0, 0, 0), xOffset, yOffset - 1, w);
   return 0;
@@ -486,11 +542,6 @@ void draw_map() {
               case 3: color = 12; break; //blue
               case 4: color = 7; break; //white
               case 5: color = 11; break; //yellow
-              // case 1: color = COLOR_FROM_RGB8(255, 0, 0); break; //red
-              // case 2: color = COLOR_FROM_RGB8(0, 255, 0); break; //green
-              // case 3: color = COLOR_FROM_RGB8(0, 0, 255); break; //blue
-              // case 4: color = COLOR_FROM_RGB8(255, 255, 255); break; //white
-              // case 5: color = COLOR_FROM_RGB8(255, 255, 43); break; //yellow
             }
             
             // Draw a wall tile (represented by a white rectangle)
@@ -570,8 +621,8 @@ int16_t main() {
     planeX = qFP16_FloatToFP(0.66f);
     planeY = qFP16_FloatToFP(0.0f); //the 2d raycaster version of camera plane
     moveSpeed = qFP16_FloatToFP(0.25f); //the constant value is in squares/second
-    sin_r = qFP16_FloatToFP(0.24740395925); // precomputed value of sin(0.25 rad)
-    cos_r = qFP16_FloatToFP(0.96891242171f);
+    sin_r = qFP16_FloatToFP(0.309f); // precomputed value of sin(1 /20 pi  rad)
+    cos_r = qFP16_FloatToFP(0.951f);
 
     prevPlayerX = (uint16_t)(qFP16_FPToInt(posX) * TILE_SIZE);
     prevPlayerY = (uint16_t)(qFP16_FPToInt(posY) * TILE_SIZE);
@@ -701,11 +752,10 @@ int16_t main() {
                   if(worldMap[qFP16_FPToInt(posX)][qFP16_FPToInt(qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed)))] == false) 
                     posY = qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed));
                 }
-                if (key(KEY_EQUAL)) {
-                    // if (movementStep < 10) {
-                    //   movementStep += 2;
-                    //   draw_ui();
-                    // }
+                if (key(KEY_M)) {
+                    bigMode = !bigMode;
+                    drawTexture();
+                    draw_ui();
                 }
                 if (key(KEY_MINUS)) {
                   // if (movementStep > 4) {
