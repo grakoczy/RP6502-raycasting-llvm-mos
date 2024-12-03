@@ -1,9 +1,7 @@
 // ---------------------------------------------------------------------------
-// bitmap_graphics_db.c
+// bitmap_graphics.c
 //
-// This library was written by tonyvr
-// and upgraded by WojciechGw for double buffering 
-// to simplify bitmap graphics programming
+// This library was written by tonyvr to simplify bitmap graphics programming
 // of the RP6502 picocomputer designed by Rumbledethumps.
 //
 // This code is an adaptation of the vga_graphics library written by V. Hunter Adams
@@ -22,10 +20,9 @@
 #include <stdint.h>
 #include "font5x7.h"
 #include "colors.h"
-#include "bitmap_graphics_db.h"
+#include "bitmap_graphics.hpp"
 
 // For drawing lines
-// defaults
 static uint16_t canvas_struct = 0xFF00;
 static uint16_t canvas_data = 0x0000;
 static uint8_t  plane = 0;
@@ -36,7 +33,6 @@ static uint8_t  bpp_mode = 3;
 static uint8_t  bpp = 4;
 
 // For drawing characters
-// defaults
 static uint16_t cursor_y = 0;
 static uint16_t cursor_x = 0;
 static uint8_t textmultiplier = 1;
@@ -113,8 +109,8 @@ void init_bitmap_graphics(uint16_t canvas_struct_address,
         canvas_h = 124; // max for 16-bit color
     } else if (bpp_mode_to_bpp[bpp_mode] == 8) { // bits color
         canvas_mode = 2;
-        canvas_w = 240; // max for 8-bit color
-        canvas_h = 124; // max for 8-bit color
+        canvas_w = 320; // max for 8-bit color
+        canvas_h = 180; // max for 8-bit color
     } else if (bpp_mode_to_bpp[bpp_mode] == 4) { // bits color
         canvas_w = 320; // max for 4-bit color
         if (canvas_mode > 2) {
@@ -154,7 +150,7 @@ void init_bitmap_graphics(uint16_t canvas_struct_address,
         printf("Asked for bits_per_pixel of %u, but got %u\n", bits_per_pixel, bpp_mode_to_bpp[bpp_mode]);
     }
 
-    //initialize the canvas
+    // initialize the canvas
     //xreg_vga_canvas(canvas_mode);
     xregn(1, 0, 0, 1, canvas_mode);
 
@@ -171,9 +167,7 @@ void init_bitmap_graphics(uint16_t canvas_struct_address,
     //xreg_vga_mode(3, bpp_mode, canvas_struct, plane); // bitmap mode
     xregn(1, 0, 1, 4, 3, bpp_mode, canvas_struct, plane);
 
-    printf("canvas_mode: %i, bpp_mode: %i, canvas_struct: %i, plane: %i\n", 
-            canvas_mode, bpp_mode, canvas_struct, plane);
-    printf("canvas_w: %i, canvas_h: %i\n", canvas_w, canvas_h);
+    printf("canvas_mode: %i, bpp_mode: %i, canvas_struct: %i, plane: %i\n", canvas_mode, bpp_mode, canvas_struct, plane);
 
     //xreg_vga_mode(0, 1); // console
 }
@@ -208,6 +202,476 @@ uint16_t random(uint16_t low_limit, uint16_t high_limit)
     }
 
     return (uint16_t)((rand() % (high_limit-low_limit)) + low_limit);
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void erase_canvas(void)
+{
+    uint16_t i, num_bytes;
+
+    if (bpp_mode == 4) { // 16bpp
+        num_bytes = (canvas_w<<1) * canvas_h;
+    } else if (bpp_mode == 3) { // 8bpp
+        num_bytes = canvas_w * canvas_h;
+    } else if (bpp_mode == 2) { // 4bpp
+        num_bytes = (canvas_w>>1) * canvas_h;
+    } else if (bpp_mode == 1) { //2bpp
+        num_bytes = (canvas_w>>2) * canvas_h;
+    } else if (bpp_mode == 0) { //1bpp
+        num_bytes = (canvas_w>>3) * canvas_h;
+    }
+
+    RIA.addr0 = canvas_data;
+    RIA.step0 = 1;
+    for (i = 0; i < (num_bytes/16); i++) {
+        // unrolled for speed
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+        RIA.rw0 = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Draw a pixel on the RP6502, for all the various bpp modes.
+// ---------------------------------------------------------------------------
+void draw_pixel(uint16_t color, uint16_t x, uint16_t y)
+{
+    if (bpp_mode == 4) { // 16bpp
+        // RIA.addr0 = canvas_w*2 * y + x*2;
+        RIA.addr0 = (canvas_w << 1) * y + (x << 1);
+        RIA.step0 = 1;
+        RIA.rw0 = color;
+        RIA.rw0 = color >> 8;
+    } else if (bpp_mode == 3) { // 8bpp
+        RIA.addr0 = canvas_w * y + x;
+        RIA.step0 = 1;
+        RIA.rw0 = color;
+    } else if (bpp_mode == 2) { // 4bpp
+        uint8_t shift = 4 * (1 - (x & 1));
+        RIA.addr0 = canvas_w/2 * y + x/2;
+        RIA.step0 = 0;
+        RIA.rw0 = (RIA.rw0 & ~(15 << shift)) | ((color & 15) << shift);
+    } else if (bpp_mode == 1) { // 2bpp
+        uint8_t shift = 2 * (3 - (x & 3));
+        RIA.addr0 = canvas_w/4 * y + x/4;
+        RIA.step0 = 0;
+        if (color > 0 && (color % 4) == 0) {
+            color = 1; // avoid 'accidental' black
+        }
+        RIA.rw0 = (RIA.rw0 & ~(3 << shift)) | ((color & 3) << shift);
+    } else if (bpp_mode == 0) { // 1bpp
+        uint8_t shift = 1 * (7 - (x & 7));
+        RIA.addr0 = canvas_w/8 * y + x/8;
+        RIA.step0 = 0;
+        color = (color != 0) ? 1 : 0;
+        RIA.rw0 = (RIA.rw0 & ~(1 << shift)) | ((color & 1) << shift);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void draw_vline(uint16_t color, uint16_t x, uint16_t y, uint16_t h)
+{
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        for (uint16_t i = 0; i < h; i++) {
+            // Calculate the address for the current pixel in the column
+            row_addr = ((canvas_w << 1) * (y + i)) + (x << 1);
+
+            // Set the address and color for the current pixel
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1;
+            RIA.rw0 = color_low;
+            RIA.rw0 = color_high;
+        }
+    } else if (bpp_mode == 3) { // Only optimize for 8bpp mode
+        uint16_t row_addr;
+
+        for (uint16_t i = 0; i < h; i++) {
+            // Calculate the address for the current pixel in the column
+            row_addr = ((canvas_w) * (y + i)) + (x );
+
+            // Set the address and color for the current pixel
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1;
+            RIA.rw0 = color;
+        }
+    }
+    else {
+        // Fallback for other bpp modes
+        for (uint16_t i = y; i < (y + h); i++) {
+            draw_pixel(color, x, i);
+        }
+    }
+}
+
+void draw_hline(uint16_t color, uint16_t x, uint16_t y, uint16_t w)
+{
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        // Calculate the starting address for the horizontal line
+        row_addr = ((canvas_w << 1) * y) + (x << 1);
+
+        // Set the address and step for horizontal line
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+        for (uint16_t i = 0; i < w; i++) {
+            RIA.rw0 = color_low;
+            RIA.rw0 = color_high;
+        }
+    } else if (bpp_mode == 3) { // Only optimize for 89bpp mode
+        uint16_t row_addr;
+
+        // Calculate the starting address for the horizontal line
+        row_addr = ((canvas_w) * y) + (x);
+
+        // Set the address and step for horizontal line
+        RIA.addr0 = row_addr;
+        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+        for (uint16_t i = 0; i < w; i++) {
+            RIA.rw0 = color;
+        }
+    }
+     else {
+        // Fallback for other bpp modes
+        for (uint16_t i = x; i < (x + w); i++) {
+            draw_pixel(color, i, y);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Draw a straight line from (x0,y0) to (x1,y1) with given color
+// using Bresenham's algorithm
+// ---------------------------------------------------------------------------
+void draw_line(uint16_t color, int16_t x0, int16_t y0, int16_t x1, int16_t y1)
+{
+    int16_t dx, dy;
+    int16_t err;
+    int16_t ystep;
+    int16_t steep = abs(y1 - y0) > abs(x1 - x0);
+
+    if (steep) {
+        swap(x0, y0);
+        swap(x1, y1);
+    }
+
+    if (x0 > x1) {
+        swap(x0, x1);
+        swap(y0, y1);
+    }
+
+    dx = x1 - x0;
+    dy = abs(y1 - y0);
+
+    err = dx / 2;
+
+    if (y0 < y1) {
+        ystep = 1;
+    } else {
+        ystep = -1;
+    }
+
+    for (; x0<=x1; x0++) {
+        if (steep) {
+            draw_pixel(color, y0, x0);
+        } else {
+            draw_pixel(color, x0, y0);
+        }
+
+        err -= dy;
+
+        if (err < 0) {
+            y0 += ystep;
+            err += dx;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void draw_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+{
+    draw_hline(color, x, y, w);
+    draw_hline(color, x, y+h-1, w);
+    draw_vline(color, x, y, h);
+    draw_vline(color, x+w-1, y, h);
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+// {
+//     uint16_t i, j;
+//     for(i=x; i<(x+w); i++) {
+//         for(j=y; j<(y+h); j++) {
+//             draw_pixel(color, i, j);
+//         }
+//     }
+// }
+
+void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+{
+    if (bpp_mode == 4) { // Only optimize for 16bpp mode
+        uint16_t row_addr;
+        
+        // Precompute the color bytes
+        uint8_t color_low = color & 0xFF;
+        uint8_t color_high = color >> 8;
+
+        // Loop through each row
+        for (uint16_t j = 0; j < h; j++) {
+            // Calculate the starting address of the row
+            row_addr = ((canvas_w << 1) * (y + j)) + (x << 1);
+            
+            // Set the initial address and step for the row
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+            // Fill the row with the color
+            for (uint16_t i = 0; i < w; i++) {
+                RIA.rw0 = color_low;
+                RIA.rw0 = color_high;
+            }
+        }
+    
+        
+    } else if (bpp_mode == 3) { // 8bpp
+        uint16_t row_addr;
+                
+        // Loop through each row
+        for (uint16_t j = 0; j < h; j++) {
+            // Calculate the starting address of the row
+            row_addr = canvas_w * (y +j) + x;
+            
+            // Set the initial address and step for the row
+            RIA.addr0 = row_addr;
+            RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+            // Fill the row with the color
+            for (uint16_t i = 0; i < w; i++) {
+                RIA.rw0 = color;
+            }
+        }
+    }
+    else {
+        // Fallback to the original implementation for other bpp modes
+        for (uint16_t i = x; i < (x + w); i++) {
+            for (uint16_t j = y; j < (y + h); j++) {
+                draw_pixel(color, i, j);
+            }
+        }
+    }
+}
+
+void fill_rect_fast(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (bpp_mode != 4) {
+        fill_rect(color, x, y, w, h);
+        return;
+    }
+
+    // 16bpp mode optimization
+    uint16_t start_addr = (canvas_w << 1) * y + (x << 1);
+    uint16_t end_addr = start_addr + (w << 1) * h;
+
+    // Set up RIA for 16bpp mode once
+    RIA.addr0 = start_addr;
+    RIA.step0 = 2; // Increment address by 2 for 16-bit writes
+    RIA.rw0 = color;
+    RIA.rw0 = color >> 8;
+
+    
+    // Loop-unrolling and batch pixel writes
+    uint16_t i, j;
+    for (i = 0; i < h; i++) {
+        for (j = 0; j < w; j += 4) {
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+            RIA.rw0 = color;
+            RIA.rw0 = color >> 8;
+        }
+        RIA.addr0 += canvas_w << 1; // Move to the next line
+    }
+    
+}
+
+// ---------------------------------------------------------------------------
+// This seems to draw circle quadrants
+// ---------------------------------------------------------------------------
+static void draw_circle_helper(uint16_t color,
+                               uint16_t x0, uint16_t y0, uint16_t r,
+                               uint8_t cornername)
+{
+    int16_t f     = 1 - r;
+    int16_t ddF_x = 1;
+    int16_t ddF_y = -2 * r;
+    int16_t x     = 0;
+    int16_t y     = r;
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f     += ddF_y;
+        }
+
+        x++;
+        ddF_x += 2;
+        f     += ddF_x;
+
+        if (cornername & 0x4) {
+            draw_pixel(color, x0 + x, y0 + y);
+            draw_pixel(color, x0 + y, y0 + x);
+        }
+        if (cornername & 0x2) {
+            draw_pixel(color, x0 + x, y0 - y);
+            draw_pixel(color, x0 + y, y0 - x);
+        }
+        if (cornername & 0x8) {
+            draw_pixel(color, x0 - y, y0 + x);
+            draw_pixel(color, x0 - x, y0 + y);
+        }
+        if (cornername & 0x1) {
+            draw_pixel(color, x0 - y, y0 - x);
+            draw_pixel(color, x0 - x, y0 - y);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void draw_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r)
+{
+    int16_t f = 1 - r;
+    int16_t ddF_x = 1;
+    int16_t ddF_y = -2 * r;
+    int16_t x = 0;
+    int16_t y = r;
+
+    draw_pixel(color, x0  , y0+r);
+    draw_pixel(color, x0  , y0-r);
+    draw_pixel(color, x0+r, y0  );
+    draw_pixel(color, x0-r, y0  );
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+
+        draw_pixel(color, x0 + x, y0 + y);
+        draw_pixel(color, x0 - x, y0 + y);
+        draw_pixel(color, x0 + x, y0 - y);
+        draw_pixel(color, x0 - x, y0 - y);
+        draw_pixel(color, x0 + y, y0 + x);
+        draw_pixel(color, x0 - y, y0 + x);
+        draw_pixel(color, x0 + y, y0 - x);
+        draw_pixel(color, x0 - y, y0 - x);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// This seems to draw filled circle quadrants
+// ---------------------------------------------------------------------------
+static void fill_circle_helper(uint16_t color,
+                               uint16_t x0, uint16_t y0, uint16_t r,
+                               uint8_t cornername, uint16_t delta)
+{
+    int16_t f     = 1 - r;
+    int16_t ddF_x = 1;
+    int16_t ddF_y = -2 * r;
+    int16_t x     = 0;
+    int16_t y     = r;
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f     += ddF_y;
+        }
+
+        x++;
+        ddF_x += 2;
+        f     += ddF_x;
+
+        if (cornername & 0x1) {
+            draw_vline(color, x0+x, y0-y, 2*y+1+delta);
+            draw_vline(color, x0+y, y0-x, 2*x+1+delta);
+        }
+        if (cornername & 0x2) {
+            draw_vline(color, x0-x, y0-y, 2*y+1+delta);
+            draw_vline(color, x0-y, y0-x, 2*x+1+delta);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void fill_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r)
+{
+    draw_vline(color, x0, y0-r, 2*r+1);
+    fill_circle_helper(color, x0, y0, r, 3, 0);
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void draw_rounded_rect(uint16_t color,
+                       uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r)
+{
+    draw_hline(color, x+r  , y    , w-2*r); // Top
+    draw_hline(color, x+r  , y+h-1, w-2*r); // Bottom
+    draw_vline(color, x    , y+r  , h-2*r); // Left
+    draw_vline(color, x+w-1, y+r  , h-2*r); // Right
+
+    // draw four corners
+    draw_circle_helper(color, x+r    , y+r    , r, 1);
+    draw_circle_helper(color, x+w-r-1, y+r    , r, 2);
+    draw_circle_helper(color, x+w-r-1, y+h-r-1, r, 4);
+    draw_circle_helper(color, x+r    , y+h-r-1, r, 8);
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+void fill_rounded_rect(uint16_t color,
+                       uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r)
+{
+    // smarter version
+    fill_rect(color, x+r, y, w-2*r, h);
+
+    // draw four corners
+    fill_circle_helper(color, x+w-r-1, y+r, r, 1, h-2*r-1);
+    fill_circle_helper(color, x+r    , y+r, r, 2, h-2*r-1);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,322 +719,10 @@ void set_text_wrap(bool w)
     wrap = w;
 }
 
-void switch_buffer(uint16_t buffer_data_address)
-{
-    xram0_struct_set(canvas_struct, vga_mode3_config_t, xram_data_ptr, buffer_data_address);
-}
-
-void erase_buffer(uint16_t buffer_data_address)
-{
-    uint16_t i, num_bytes;
-
-    if (bpp_mode == 4) { // 16bpp
-        num_bytes = (canvas_w<<1) * canvas_h;
-    } else if (bpp_mode == 3) { // 8bpp
-        num_bytes = canvas_w * canvas_h;
-    } else if (bpp_mode == 2) { // 4bpp
-        num_bytes = (canvas_w>>1) * canvas_h;
-    } else if (bpp_mode == 1) { //2bpp
-        num_bytes = (canvas_w>>2) * canvas_h;
-    } else if (bpp_mode == 0) { //1bpp
-        num_bytes = (canvas_w>>3) * canvas_h;
-    }
-
-    RIA.addr0 = buffer_data_address;
-    RIA.step0 = 1;
-    for (i = 0; i < (num_bytes/16); i++) {
-        // unrolled for speed
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-        RIA.rw0 = 0;
-    }
-}
-
-void draw_pixel2buffer(uint16_t color, uint16_t x, uint16_t y, uint16_t buffer_data_address)
-{
-    if (bpp_mode == 4) { // 16bpp
-        RIA.addr0 = buffer_data_address + (canvas_w * 2 * y + x * 2);
-        RIA.step0 = 1;
-        RIA.rw0 = color;
-        RIA.rw0 = color >> 8;
-    } else if (bpp_mode == 3) { // 8bpp
-        RIA.addr0 = buffer_data_address + (canvas_w * y + x);
-        RIA.step0 = 1;
-        RIA.rw0 = color;
-    } else if (bpp_mode == 2) { // 4bpp
-        uint8_t shift = 4 * (1 - (x & 1));
-        RIA.addr0 = buffer_data_address + (canvas_w / 2 * y + x / 2);
-        RIA.step0 = 0;
-        RIA.rw0 = (RIA.rw0 & ~(15 << shift)) | ((color & 15) << shift);
-    } else if (bpp_mode == 1) { // 2bpp
-        uint8_t shift = 2 * (3 - (x & 3));
-        RIA.addr0 = buffer_data_address + (canvas_w / 4 * y + x / 4);
-        RIA.step0 = 0;
-        if (color > 0 && (color % 4) == 0) {
-            color = 1; // avoid 'accidental' black
-        }
-        RIA.rw0 = (RIA.rw0 & ~(3 << shift)) | ((color & 3) << shift);
-    } else if (bpp_mode == 0) { // 1bpp
-        uint8_t shift = 1 * (7 - (x & 7));
-        RIA.addr0 = buffer_data_address + (canvas_w / 8 * y + x / 8);
-        RIA.step0 = 0;
-        color = (color != 0) ? 1 : 0;
-        RIA.rw0 = (RIA.rw0 & ~(1 << shift)) | ((color & 1) << shift);
-    }
-}
-
-void draw_line2buffer(uint16_t color, int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t buffer_data_address)
-{
-    int16_t dx, dy;
-    int16_t err;
-    int16_t ystep;
-    int16_t steep = abs(y1 - y0) > abs(x1 - x0);
-
-    if (steep) {
-        swap(x0, y0);
-        swap(x1, y1);
-    }
-
-    if (x0 > x1) {
-        swap(x0, x1);
-        swap(y0, y1);
-    }
-
-    dx = x1 - x0;
-    dy = abs(y1 - y0);
-
-    err = dx / 2;
-
-    if (y0 < y1) {
-        ystep = 1;
-    } else {
-        ystep = -1;
-    }
-
-    for (; x0<=x1; x0++) {
-        if (steep) {
-            draw_pixel2buffer(color, y0, x0, buffer_data_address);
-        } else {
-            draw_pixel2buffer(color, x0, y0, buffer_data_address);
-        }
-
-        err -= dy;
-
-        if (err < 0) {
-            y0 += ystep;
-            err += dx;
-        }
-    }
-}
-
-void draw_vline2buffer(uint16_t color, uint16_t x, uint16_t y, uint16_t h, uint16_t buffer_data_address)
-{
-    uint16_t i;
-    for (i=y; i<(y+h); i++) {
-        draw_pixel2buffer(color, x, i, buffer_data_address);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void draw_hline2buffer(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t buffer_data_address)
-{
-    uint16_t i;
-    for (i=x; i<(x+w); i++) {
-        draw_pixel2buffer(color, i, y, buffer_data_address);
-    }
-}
-
-void draw_rect2buffer(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t buffer_data_address)
-{
-    draw_hline2buffer(color, x, y, w, buffer_data_address);
-    draw_hline2buffer(color, x, y+h-1, w, buffer_data_address);
-    draw_vline2buffer(color, x, y, h, buffer_data_address);
-    draw_vline2buffer(color, x+w-1, y, h, buffer_data_address);
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void fill_rect2buffer(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t buffer_data_address)
-{
-    uint16_t i, j;
-    for(i=x; i<(x+w); i++) {
-        for(j=y; j<(y+h); j++) {
-            draw_pixel2buffer(color, i, j, buffer_data_address);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// This seems to draw circle quadrants
-// ---------------------------------------------------------------------------
-static void draw_circle_helper2buffer(uint16_t color,
-                               uint16_t x0, uint16_t y0, uint16_t r,
-                               uint8_t cornername, uint16_t buffer_data_address)
-{
-    int16_t f     = 1 - r;
-    int16_t ddF_x = 1;
-    int16_t ddF_y = -2 * r;
-    int16_t x     = 0;
-    int16_t y     = r;
-
-    while (x<y) {
-        if (f >= 0) {
-            y--;
-            ddF_y += 2;
-            f     += ddF_y;
-        }
-
-        x++;
-        ddF_x += 2;
-        f     += ddF_x;
-
-        if (cornername & 0x4) {
-            draw_pixel2buffer(color, x0 + x, y0 + y, buffer_data_address);
-            draw_pixel2buffer(color, x0 + y, y0 + x, buffer_data_address);
-        }
-        if (cornername & 0x2) {
-            draw_pixel2buffer(color, x0 + x, y0 - y, buffer_data_address);
-            draw_pixel2buffer(color, x0 + y, y0 - x, buffer_data_address);
-        }
-        if (cornername & 0x8) {
-            draw_pixel2buffer(color, x0 - y, y0 + x, buffer_data_address);
-            draw_pixel2buffer(color, x0 - x, y0 + y, buffer_data_address);
-        }
-        if (cornername & 0x1) {
-            draw_pixel2buffer(color, x0 - y, y0 - x, buffer_data_address);
-            draw_pixel2buffer(color, x0 - x, y0 - y, buffer_data_address);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void draw_circle2buffer(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r, uint16_t buffer_data_address)
-{
-    int16_t f = 1 - r;
-    int16_t ddF_x = 1;
-    int16_t ddF_y = -2 * r;
-    int16_t x = 0;
-    int16_t y = r;
-
-    draw_pixel2buffer(color, x0  , y0+r, buffer_data_address);
-    draw_pixel2buffer(color, x0  , y0-r, buffer_data_address);
-    draw_pixel2buffer(color, x0+r, y0  , buffer_data_address);
-    draw_pixel2buffer(color, x0-r, y0  , buffer_data_address);
-
-    while (x<y) {
-        if (f >= 0) {
-            y--;
-            ddF_y += 2;
-            f += ddF_y;
-        }
-
-        x++;
-        ddF_x += 2;
-        f += ddF_x;
-
-        draw_pixel2buffer(color, x0 + x, y0 + y, buffer_data_address);
-        draw_pixel2buffer(color, x0 - x, y0 + y, buffer_data_address);
-        draw_pixel2buffer(color, x0 + x, y0 - y, buffer_data_address);
-        draw_pixel2buffer(color, x0 - x, y0 - y, buffer_data_address);
-        draw_pixel2buffer(color, x0 + y, y0 + x, buffer_data_address);
-        draw_pixel2buffer(color, x0 - y, y0 + x, buffer_data_address);
-        draw_pixel2buffer(color, x0 + y, y0 - x, buffer_data_address);
-        draw_pixel2buffer(color, x0 - y, y0 - x, buffer_data_address);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// This seems to draw filled circle quadrants
-// ---------------------------------------------------------------------------
-static void fill_circle_helper2buffer(uint16_t color,
-                               uint16_t x0, uint16_t y0, uint16_t r,
-                               uint8_t cornername, uint16_t delta, uint16_t buffer_data_address)
-{
-    int16_t f     = 1 - r;
-    int16_t ddF_x = 1;
-    int16_t ddF_y = -2 * r;
-    int16_t x     = 0;
-    int16_t y     = r;
-
-    while (x<y) {
-        if (f >= 0) {
-            y--;
-            ddF_y += 2;
-            f     += ddF_y;
-        }
-
-        x++;
-        ddF_x += 2;
-        f     += ddF_x;
-
-        if (cornername & 0x1) {
-            draw_vline2buffer(color, x0+x, y0-y, 2*y+1+delta, buffer_data_address);
-            draw_vline2buffer(color, x0+y, y0-x, 2*x+1+delta, buffer_data_address);
-        }
-        if (cornername & 0x2) {
-            draw_vline2buffer(color, x0-x, y0-y, 2*y+1+delta, buffer_data_address);
-            draw_vline2buffer(color, x0-y, y0-x, 2*x+1+delta, buffer_data_address);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void fill_circle2buffer(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r, uint16_t buffer_data_address)
-{
-    draw_vline2buffer(color, x0, y0-r, 2*r+1, buffer_data_address);
-    fill_circle_helper2buffer(color, x0, y0, r, 3, 0, buffer_data_address);
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void draw_rounded_rect2buffer(uint16_t color,
-                       uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t buffer_data_address)
-{
-    draw_hline2buffer(color, x+r  , y    , w-2*r, buffer_data_address); // Top
-    draw_hline2buffer(color, x+r  , y+h-1, w-2*r, buffer_data_address); // Bottom
-    draw_vline2buffer(color, x    , y+r  , h-2*r, buffer_data_address); // Left
-    draw_vline2buffer(color, x+w-1, y+r  , h-2*r, buffer_data_address); // Right
-
-    // draw four corners
-    draw_circle_helper2buffer(color, x+r    , y+r    , r, 1, buffer_data_address);
-    draw_circle_helper2buffer(color, x+w-r-1, y+r    , r, 2, buffer_data_address);
-    draw_circle_helper2buffer(color, x+w-r-1, y+h-r-1, r, 4, buffer_data_address);
-    draw_circle_helper2buffer(color, x+r    , y+h-r-1, r, 8, buffer_data_address);
-}
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-void fill_rounded_rect2buffer(uint16_t color,
-                       uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t buffer_data_address)
-{
-    // smarter version
-    fill_rect2buffer(color, x+r, y, w-2*r, h, buffer_data_address);
-
-    // draw four corners
-    fill_circle_helper2buffer(color, x+w-r-1, y+r, r, 1, h-2*r-1, buffer_data_address);
-    fill_circle_helper2buffer(color, x+r    , y+r, r, 2, h-2*r-1, buffer_data_address);
-}
-
 // ---------------------------------------------------------------------------
 // Draw a character at x, y
 // ---------------------------------------------------------------------------
-void draw_char2buffer(char chr, uint16_t x, uint16_t y, uint16_t buffer_data_address)
+void draw_char(char chr, uint16_t x, uint16_t y)
 {
     uint8_t i, j;
 
@@ -591,15 +743,15 @@ void draw_char2buffer(char chr, uint16_t x, uint16_t y, uint16_t buffer_data_add
         for ( j = 0; j<8; j++) {
             if (line & 0x1) {
                 if (textmultiplier == 1) { // default size
-                    draw_pixel2buffer(textcolor, x+i, y+j, buffer_data_address);
+                    draw_pixel(textcolor, x+i, y+j);
                 } else {  // big size
-                    fill_rect2buffer(textcolor, x+(i*textmultiplier), y+(j*textmultiplier), textmultiplier, textmultiplier, buffer_data_address);
+                    fill_rect(textcolor, x+(i*textmultiplier), y+(j*textmultiplier), textmultiplier, textmultiplier);
                 }
             } else if (textbgcolor != textcolor) {
                 if (textmultiplier == 1) { // default size
-                    draw_pixel2buffer(textbgcolor, x+i, y+j, buffer_data_address);
+                    draw_pixel(textbgcolor, x+i, y+j);
                 } else {  // big size
-                    fill_rect2buffer(textbgcolor, x+(i*textmultiplier), y+(j*textmultiplier), textmultiplier, textmultiplier, buffer_data_address);
+                    fill_rect(textbgcolor, x+(i*textmultiplier), y+(j*textmultiplier), textmultiplier, textmultiplier);
                 }
             }
             line >>= 1;
@@ -610,7 +762,7 @@ void draw_char2buffer(char chr, uint16_t x, uint16_t y, uint16_t buffer_data_add
 // ---------------------------------------------------------------------------
 // Draw a character at cursor_x, cursor_y, then advance the cursor.
 // ---------------------------------------------------------------------------
-static void draw_char_at_cursor2buffer(char chr, uint16_t buffer_data_address)
+static void draw_char_at_cursor(char chr)
 {
     if (chr == '\n') {
         cursor_y += textmultiplier*8;
@@ -624,7 +776,7 @@ static void draw_char_at_cursor2buffer(char chr, uint16_t buffer_data_address)
             cursor_x = new_x;
         }
     } else {
-        draw_char2buffer(chr, cursor_x, cursor_y, buffer_data_address);
+        draw_char(chr, cursor_x, cursor_y);
         cursor_x += textmultiplier*6;
 
         if (wrap && (cursor_x > (canvas_w - textmultiplier*6))) {
@@ -637,9 +789,9 @@ static void draw_char_at_cursor2buffer(char chr, uint16_t buffer_data_address)
 // ---------------------------------------------------------------------------
 // Draw a zero-terminated string at cursor_x, cursor_y, then advance the cursor.
 // ---------------------------------------------------------------------------
-void draw_string2buffer(char * str, uint16_t buffer_data_address)
+void draw_string(char * str)
 {
     while (*str) {
-        draw_char_at_cursor2buffer(*str++, buffer_data_address);
+        draw_char_at_cursor(*str++);
     }
 }

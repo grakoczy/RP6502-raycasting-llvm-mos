@@ -7,11 +7,11 @@
 #include <time.h>
 #include "colors.h"
 #include "usb_hid_keys.h"
-// #include "bitmap_graphics.h"
-#include "qfp16.h"
+#include "bitmap_graphics.hpp"
 #include "textures32.h"
 #include "FpF.hpp"
 
+using namespace mn::MFixedPoint;
 
 #define COLOR_FROM_RGB8(r,g,b) (((b>>3)<<11)|((g>>3)<<6)|(r>>3))
 
@@ -19,47 +19,42 @@
 #define mapHeight 18
 #define SCREEN_WIDTH 320 
 #define SCREEN_HEIGHT 180 
-#define WINDOW_WIDTH 80
-#define WINDOW_HEIGTH 48
+#define WINDOW_WIDTH 128
+#define WINDOW_HEIGTH 64
 #define TILE_SIZE 2
 #define SCALE 2
 #define MIN_SCALE 8
 #define MAX_SCALE 2
 
-const qFP16_t MAXQVAL = qFP16_Constant(32767.999985);
-const  qFP16_t one = qFP16_Constant(1.0f);
-const  qFP16_t minusone = qFP16_Constant(-1.0f);
 
+FpF16<7> posX(9);
+FpF16<7> posY(11);
+FpF16<7> dirX(0);
+FpF16<7> dirY(-1); //These HAVE TO be float, or something with a lot more precision
+FpF16<7> planeX(0.66);
+FpF16<7> planeY(0.0); //the 2d raycaster version of camera plane
+FpF16<7> moveSpeed(0.2); //the constant value is in squares/second
+FpF16<7> playerScale(3);
+FpF16<7> sin_r(0.259); // precomputed value of sin(0.1 rad)
+FpF16<7> cos_r(0.966);
 
-qFP16_t posX;
-qFP16_t posY;  //x and y start position
-qFP16_t dirX, dirY; //initial direction vector
-qFP16_t prevDirX, prevDirY;
-qFP16_t planeX, planeY; //the 2d raycaster version of camera plane
-qFP16_t moveSpeed; //the constant value is in squares/second
-qFP16_t sin_r; // precomputed value of sin(0.25 rad)
-qFP16_t cos_r;
-
-char ans[ 10 ];
-char *buf[] = {"                                                                  "};
+FpF16<7> prevDirX, prevDirY;                                                       
 
 uint16_t prevPlayerX, prevPlayerY;
 
 int8_t currentStep = 1;
 int8_t movementStep = 4; 
-uint8_t currentScale = SCALE;
 
 
+uint8_t xOffset = 96;
+uint8_t yOffset = 30;
 
-uint8_t xOffset = (uint8_t)((SCREEN_WIDTH - WINDOW_WIDTH * 2) / 2);
-uint8_t yOffset = (uint8_t)((SCREEN_HEIGHT - WINDOW_HEIGTH * 2) / 2);
 
-
-const uint16_t w = WINDOW_WIDTH;
-const uint16_t h = WINDOW_HEIGTH; 
+const uint8_t w = WINDOW_WIDTH;
+const uint8_t h = WINDOW_HEIGTH; 
 
 bool wireMode = false;
-bool bigMode = true;
+bool bigMode = false;
 
 uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
@@ -75,24 +70,21 @@ uint8_t gamestate_prev = 1;
 
 #define ROTATION_STEPS 24
 
-qFP16_t dirXValues[ROTATION_STEPS];
-qFP16_t dirYValues[ROTATION_STEPS];
-qFP16_t planeXValues[ROTATION_STEPS];
-qFP16_t planeYValues[ROTATION_STEPS];
-qFP16_t texStepValues[WINDOW_HEIGTH+1];
-qFP16_t cameraXValues[ROTATION_STEPS][WINDOW_WIDTH];
-qFP16_t rayDirXValues[ROTATION_STEPS][WINDOW_WIDTH];
-qFP16_t rayDirYValues[ROTATION_STEPS][WINDOW_WIDTH];
-qFP16_t deltaDistXValues[ROTATION_STEPS][WINDOW_WIDTH];
-qFP16_t deltaDistYValues[ROTATION_STEPS][WINDOW_WIDTH];
+FpF16<7> dirXValues[ROTATION_STEPS];
+FpF16<7> dirYValues[ROTATION_STEPS];
+FpF16<7> planeXValues[ROTATION_STEPS];
+FpF16<7> planeYValues[ROTATION_STEPS];
+FpF16<7> texStepValues[WINDOW_HEIGTH+1];
+FpF16<7> cameraXValues[ROTATION_STEPS][WINDOW_WIDTH];
+FpF16<7> rayDirXValues[ROTATION_STEPS][WINDOW_WIDTH];
+FpF16<7> rayDirYValues[ROTATION_STEPS][WINDOW_WIDTH];
+FpF16<7> deltaDistXValues[ROTATION_STEPS][WINDOW_WIDTH];
+FpF16<7> deltaDistYValues[ROTATION_STEPS][WINDOW_WIDTH];
+
 uint8_t currentRotStep = 1; // Tracks the current rotation step
 
-qFP16_t invW;
-qFP16_t halfH;
-
-
-
-uint8_t bpp;
+FpF16<7> invW;
+FpF16<7> halfH(h / 2);
 
 // XRAM locations
 #define KEYBOARD_INPUT 0xFF10 // KEYBOARD_BYTES of bitmask data
@@ -130,7 +122,6 @@ int16_t worldMap[mapHeight][mapWidth]=
 };
 
 
-
 float f_abs(float value) {
     // Check if the value is negative
     if (value < 0) {
@@ -141,102 +132,127 @@ float f_abs(float value) {
     return value;
 }
 
+inline FpF16<7> fp_abs(FpF16<7> value) {
+    // Check if the value is negative
+    if (value.GetRawVal() < 0) 
+        // If negative, return the negation to make it positive
+        return -value;
+    return value;
+} 
+
+inline FpF16<7> floorFixed(FpF16<7> a) {
+    // If the number is positive, the floor is the same as the number.
+    // If the number is negative, the floor is one less than the number.
+    int32_t rawVal = a.GetRawVal();
+    int32_t floorVal = rawVal >= 0 ? rawVal & 0xFFC0 : (rawVal & 0xFFC0) - 0x400;
+    FpF16<7> result(floorVal);
+    return result;
+}
+
 uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min, uint8_t out_max) {
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
+inline int FP16ToIntPercent(FpF16<7> number) {
+    return static_cast<int>((float)(number) * 100);
+}
+
 void drawBufferDouble() {
-    RIA.step0 = 1; // Set step size once, as it does not change
+    RIA.step0 = 1; // Step size fixed
 
     // Loop through each row
     for (uint8_t j = 0; j < h; j++) {
         uint16_t row_addr = SCREEN_WIDTH * (yOffset + (j << 1)) + xOffset;
         uint16_t bufferIndex = j * WINDOW_WIDTH;
 
-        // Precompute the base row addresses
+        // Cache next row address
         uint16_t row_addr_next = row_addr + SCREEN_WIDTH;
 
-        // Draw 8 2x2 pixel blocks in one iteration
+        // Access buffer directly using a pointer
+        uint8_t* bufPtr = &buffer[bufferIndex];
+
+        // Iterate through columns in blocks
         for (uint8_t i = 0; i < w; i += 8) {
-            // Precompute addresses
             uint16_t addr1 = row_addr + (i << 1);
             uint16_t addr2 = row_addr_next + (i << 1);
 
-            // Block 1
-            uint16_t color1 = buffer[bufferIndex + i];
+            // Write all 8 blocks using unrolled loop
+            uint8_t color0 = *bufPtr++;
+            uint8_t color1 = *bufPtr++;
+            uint8_t color2 = *bufPtr++;
+            uint8_t color3 = *bufPtr++;
+            uint8_t color4 = *bufPtr++;
+            uint8_t color5 = *bufPtr++;
+            uint8_t color6 = *bufPtr++;
+            uint8_t color7 = *bufPtr++;
+
+            // Block 0
             RIA.addr0 = addr1;
-            RIA.rw0 = color1;
-            RIA.rw0 = color1;
+            RIA.rw0 = color0;
+            RIA.rw0 = color0;
             RIA.addr0 = addr2;
+            RIA.rw0 = color0;
+            RIA.rw0 = color0;
+
+            // Block 1
+            RIA.addr0 = addr1 + 2;
+            RIA.rw0 = color1;
+            RIA.rw0 = color1;
+            RIA.addr0 = addr2 + 2;
             RIA.rw0 = color1;
             RIA.rw0 = color1;
 
             // Block 2
-            uint16_t color2 = buffer[bufferIndex + i + 1];
-            RIA.addr0 = addr1 + 2;
+            RIA.addr0 = addr1 + 4;
             RIA.rw0 = color2;
             RIA.rw0 = color2;
-            RIA.addr0 = addr2 + 2;
+            RIA.addr0 = addr2 + 4;
             RIA.rw0 = color2;
             RIA.rw0 = color2;
 
             // Block 3
-            uint16_t color3 = buffer[bufferIndex + i + 2];
-            RIA.addr0 = addr1 + 4;
+            RIA.addr0 = addr1 + 6;
             RIA.rw0 = color3;
             RIA.rw0 = color3;
-            RIA.addr0 = addr2 + 4;
+            RIA.addr0 = addr2 + 6;
             RIA.rw0 = color3;
             RIA.rw0 = color3;
 
             // Block 4
-            uint16_t color4 = buffer[bufferIndex + i + 3];
-            RIA.addr0 = addr1 + 6;
+            RIA.addr0 = addr1 + 8;
             RIA.rw0 = color4;
             RIA.rw0 = color4;
-            RIA.addr0 = addr2 + 6;
+            RIA.addr0 = addr2 + 8;
             RIA.rw0 = color4;
             RIA.rw0 = color4;
 
             // Block 5
-            uint16_t color5 = buffer[bufferIndex + i + 4];
-            RIA.addr0 = addr1 + 8;
+            RIA.addr0 = addr1 + 10;
             RIA.rw0 = color5;
             RIA.rw0 = color5;
-            RIA.addr0 = addr2 + 8;
+            RIA.addr0 = addr2 + 10;
             RIA.rw0 = color5;
             RIA.rw0 = color5;
 
             // Block 6
-            uint16_t color6 = buffer[bufferIndex + i + 5];
-            RIA.addr0 = addr1 + 10;
+            RIA.addr0 = addr1 + 12;
             RIA.rw0 = color6;
             RIA.rw0 = color6;
-            RIA.addr0 = addr2 + 10;
+            RIA.addr0 = addr2 + 12;
             RIA.rw0 = color6;
             RIA.rw0 = color6;
 
             // Block 7
-            uint16_t color7 = buffer[bufferIndex + i + 6];
-            RIA.addr0 = addr1 + 12;
+            RIA.addr0 = addr1 + 14;
             RIA.rw0 = color7;
             RIA.rw0 = color7;
-            RIA.addr0 = addr2 + 12;
+            RIA.addr0 = addr2 + 14;
             RIA.rw0 = color7;
             RIA.rw0 = color7;
 
-            // Block 8
-            uint16_t color8 = buffer[bufferIndex + i + 7];
-            RIA.addr0 = addr1 + 14;
-            RIA.rw0 = color8;
-            RIA.rw0 = color8;
-            RIA.addr0 = addr2 + 14;
-            RIA.rw0 = color8;
-            RIA.rw0 = color8;
         }
     }
 }
-
 
 
 void drawBufferRegular() {
@@ -265,32 +281,34 @@ void drawBufferRegular() {
 
 void precalculateRotations() {
     // Starting values
-    qFP16_t currentDirX = dirX;
-    qFP16_t currentDirY = dirY;
-    qFP16_t currentPlaneX = planeX;
-    qFP16_t currentPlaneY = planeY;
+    FpF16<7> currentDirX = dirX;
+    FpF16<7> currentDirY = dirY;
+    FpF16<7> currentPlaneX = planeX;
+    FpF16<7> currentPlaneY = planeY;
 
     
     
 
-    invW = qFP16_Div(one, qFP16_IntToFP(w));
-    halfH =  qFP16_IntToFP(h >> 1);
+    invW = FpF16<7>(1) / FpF16<7>(w); // qFP16_Div(one, qFP16_IntToFP(w));
+    FpF16<7> fw =  FpF16<7>(w);
+
+    halfH =  FpF16<7>(h >> 1);
 
     for (uint8_t i = 0; i < WINDOW_HEIGTH+1; i++) {
-      texStepValues[i] = qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(i));
+      texStepValues[i] =  FpF16<7>(texHeight) / FpF16<7>(i);// qFP16_Div(qFP16_Constant(texHeight), qFP16_IntToFP(i));
     }
 
     // Compute for right rotation (0.25 rad steps)
     for (uint8_t i = 0; i < ROTATION_STEPS; i++) {
       printf(".");
       // Rotate right (counterclockwise by 0.25 rad)
-      qFP16_t oldDirX = currentDirX;
-      currentDirX = qFP16_Sub(qFP16_Mul(currentDirX, cos_r), qFP16_Mul(currentDirY, sin_r));
-      currentDirY = qFP16_Add(qFP16_Mul(oldDirX, sin_r), qFP16_Mul(currentDirY, cos_r));
+      FpF16<7> oldDirX = currentDirX;
+      currentDirX = currentDirX * cos_r - currentDirY * sin_r;//  qFP16_Sub(qFP16_Mul(currentDirX, cos_r), qFP16_Mul(currentDirY, sin_r));
+      currentDirY = oldDirX * sin_r + currentDirY * cos_r;// qFP16_Add(qFP16_Mul(oldDirX, sin_r), qFP16_Mul(currentDirY, cos_r));
 
-      qFP16_t oldPlaneX = currentPlaneX;
-      currentPlaneX = qFP16_Sub(qFP16_Mul(currentPlaneX, cos_r), qFP16_Mul(currentPlaneY, sin_r));
-      currentPlaneY = qFP16_Add(qFP16_Mul(oldPlaneX, sin_r), qFP16_Mul(currentPlaneY, cos_r));
+      FpF16<7> oldPlaneX = currentPlaneX;
+      currentPlaneX = currentPlaneX * cos_r - currentPlaneY * sin_r;// qFP16_Sub(qFP16_Mul(currentPlaneX, cos_r), qFP16_Mul(currentPlaneY, sin_r));
+      currentPlaneY = oldPlaneX * sin_r + currentPlaneY * cos_r;// (qFP16_Mul(oldPlaneX, sin_r), qFP16_Mul(currentPlaneY, cos_r));
 
       dirXValues[i] = currentDirX;
       dirYValues[i] = currentDirY;
@@ -300,11 +318,30 @@ void precalculateRotations() {
       for(uint8_t x = 0; x < w; x += currentStep)
       {
   
-        qFP16_t cameraX = qFP16_Sub(qFP16_Mul(qFP16_IntToFP(x << 1), invW), one);
-        qFP16_t rayDirX = qFP16_Add(qFP16_Mul(currentPlaneX, cameraX), currentDirX);
-        qFP16_t rayDirY = qFP16_Add(qFP16_Mul(currentPlaneY, cameraX), currentDirY);
-        qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
-        qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
+        // FpF16<7> cameraX = FpF16<7>(x) / 2 * invW - FpF16<7>(1);// qFP16_Sub(qFP16_Mul(qFP16_IntToFP(x << 1), invW), one);
+        // FpF16<7> rayDirX = currentPlaneX * cameraX + currentDirX; //qFP16_Add(qFP16_Mul(currentPlaneX, cameraX), currentDirX);
+        // FpF16<7> rayDirY = currentPlaneY * cameraX + currentDirY;// qFP16_Add(qFP16_Mul(currentPlaneY, cameraX), currentDirY);
+
+        FpF16<7> cameraX = FpF16<7>(2 * x) / fw - FpF16<7>(1); //x-coordinate in camera space;
+        FpF16<7> rayDirX = currentDirX + currentPlaneX * cameraX;
+        FpF16<7> rayDirY = currentDirY + currentPlaneY * cameraX;
+
+        // qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
+        // qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
+
+        FpF16<7> deltaDistX, deltaDistY;
+
+        if (rayDirX == 0 || (rayDirX.GetRawVal() == -261) ) { 
+          deltaDistX = 127;
+        } else { 
+          deltaDistX = fp_abs(FpF16<7>(1) / rayDirX); 
+        }
+        if (rayDirY == 0 || (rayDirY.GetRawVal() == -261)) { 
+          deltaDistY = 127;
+        } else { 
+          deltaDistY = fp_abs(FpF16<7>(1) / rayDirY); 
+        }
+
         cameraXValues[i][x] = cameraX;
         rayDirXValues[i][x] = rayDirX;
         rayDirYValues[i][x] = rayDirY;
@@ -322,103 +359,158 @@ void precalculateRotations() {
 
 }
 
-int raycastFP()
+
+int raycastF()
 {
-  // Precompute common values
 
+
+    for (uint8_t x = 0; x < w; x += currentStep)
+    {
+      //calculate ray position and direction
+
+ 
+      FpF16<7> cameraX = cameraXValues[currentRotStep][x];
+      FpF16<7> rayDirX = rayDirXValues[currentRotStep][x];
+      FpF16<7> rayDirY = rayDirYValues[currentRotStep][x];
+
+
+      //which box of the map we're in
+      int mapX = (int)posX;
+      int mapY = (int)posY; 
+
+      //length of ray from current position to next x or y-side
+      FpF16<7> sideDistX;
+      FpF16<7> sideDistY;
+
+      float fsideDistX;
+      float fsideDistY;
+
+      //length of ray from one x or y-side to next x or y-side
+      //these are derived as:
+      //deltaDistX = sqrt(1 + (rayDirY * rayDirY) / (rayDirX * rayDirX))
+      //deltaDistY = sqrt(1 + (rayDirX * rayDirX) / (rayDirY * rayDirY))
+      //which can be simplified to abs(|rayDir| / rayDirX) and abs(|rayDir| / rayDirY)
+      //where |rayDir| is the length of the vector (rayDirX, rayDirY). Its length,
+      //unlike (dirX, dirY) is not 1, however this does not matter, only the
+      //ratio between deltaDistX and deltaDistY matters, due to the way the DDA
+      //stepping further below works. So the values can be computed as below.
+      // Division through zero is prevented, even though technically that's not
+      // needed in C++ with IEEE 754 floating point values.
   
-  for (uint8_t x = 0; x < w; x += currentStep) {
-    qFP16_t cameraX = cameraXValues[currentRotStep][x];
-    qFP16_t rayDirX = rayDirXValues[currentRotStep][x];
-    qFP16_t rayDirY = rayDirYValues[currentRotStep][x];
+      FpF16<7> deltaDistX = deltaDistXValues[currentRotStep][x];
+      FpF16<7> deltaDistY = deltaDistYValues[currentRotStep][x];
 
-    int8_t mapX = (int8_t)qFP16_FPToInt(posX);
-    int8_t mapY = (int8_t)qFP16_FPToInt(posY);
+      int idx = (int)deltaDistX;
+      int fdx = (int)deltaDistX;
 
-    // qFP16_t deltaDistX = (rayDirX == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirX));
-    // qFP16_t deltaDistY = (rayDirY == 0) ? MAXQVAL : qFP16_Abs(qFP16_Div(one, rayDirY));
-    qFP16_t deltaDistX = deltaDistXValues[currentRotStep][x];
-    qFP16_t deltaDistY = deltaDistYValues[currentRotStep][x];
 
-    qFP16_t sideDistX, sideDistY;
-    int8_t stepX, stepY;
+      FpF16<7> perpWallDist;
 
-    // Precompute initial `sideDistX` and `sideDistY`
-    if (rayDirX < 0) {
+      //what direction to step in x or y-direction (either +1 or -1)
+      int stepX;
+      int stepY;
+
+      int hit = 0; //was there a wall hit?
+      int side; //was a NS or a EW wall hit?
+
+      //calculate step and initial sideDist
+      if(rayDirX < FpF16<7>(0))
+      {
         stepX = -1;
-        sideDistX = qFP16_Mul(qFP16_Sub(posX, qFP16_IntToFP(mapX)), deltaDistX);
-    } else {
+        sideDistX = (posX - mapX) * deltaDistX;
+      }
+      else
+      {
         stepX = 1;
-        sideDistX = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapX), one), posX), deltaDistX);
-    }
-    if (rayDirY < 0) {
+        sideDistX = (FpF16<7>(mapX + 1.0) - posX) * deltaDistX;
+      }
+      if(rayDirY < FpF16<7>(0))
+      {
         stepY = -1;
-        sideDistY = qFP16_Mul(qFP16_Sub(posY, qFP16_IntToFP(mapY)), deltaDistY);
-    } else {
+        sideDistY = (posY - mapY) * deltaDistY;
+      }
+      else
+      {
         stepY = 1;
-        sideDistY = qFP16_Mul(qFP16_Sub(qFP16_Add(qFP16_IntToFP(mapY), one), posY), deltaDistY);
-    }
-
-    // DDA loop to find wall intersection
-    int8_t hit = 0, side;
-    while (!hit) {
-        if (sideDistX < sideDistY) {
-            sideDistX = qFP16_Add(sideDistX, deltaDistX);
-            mapX += stepX;
-            side = 0;
-        } else {
-            sideDistY = qFP16_Add(sideDistY, deltaDistY);
-            mapY += stepY;
-            side = 1;
+        sideDistY = (FpF16<7>(mapY + 1.0) - posY) * deltaDistY;
+      }
+      //perform DDA
+      while(hit == 0)
+      {
+        //jump to next map square, either in x-direction, or in y-direction
+        if(sideDistX < sideDistY)
+        {
+          sideDistX += deltaDistX;
+          mapX += stepX;
+          side = 0;
         }
-        if (worldMap[mapX][mapY] > 0) hit = 1;
-    }
+        else
+        {
+          sideDistY += deltaDistY;
+          mapY += stepY;
+          side = 1;
+        }
+        //Check if ray has hit a wall
+        if(worldMap[mapX][mapY] > 0) hit = 1;
+      }
 
-    // Compute perpendicular wall distance
-    qFP16_t perpWallDist = (side == 0) ? qFP16_Sub(sideDistX, deltaDistX) 
-                                       : qFP16_Sub(sideDistY, deltaDistY);
+     
+      //Calculate distance projected on camera direction. This is the shortest distance from the point where the wall is
+      //hit to the camera plane. Euclidean to center camera point would give fisheye effect!
+      //This can be computed as (mapX - posX + (1 - stepX) / 2) / rayDirX for side == 0, or same formula with Y
+      //for size == 1, but can be simplified to the code below thanks to how sideDist and deltaDist are computed:
+      //because they were left scaled to |rayDir|. sideDist is the entire length of the ray above after the multiple
+      //steps, but we subtract deltaDist once because one step more into the wall was taken above.
+      if(side == 0) perpWallDist = (sideDistX - deltaDistX);
+      else          perpWallDist = (sideDistY - deltaDistY);
 
-    uint8_t lineHeight = (uint8_t)((h << 4) / (perpWallDist >> 12));
-    // printf("lineHeight: %i, new: %i, %s\n", lineHeight, (int)((h << 4) / (perpWallDist >> 12)), qFP16_FPToA(perpWallDist, ans, 4));
 
-    if (lineHeight > h) lineHeight = h;
+      //Calculate height of line to draw on screen
+      uint8_t lineHeight = h;
+      lineHeight = (int)(FpF16<7>(h) / perpWallDist);
 
-    int8_t drawStart = (-lineHeight >> 1) + (h >> 1);
-    if (drawStart < 0) drawStart = 0;
-    uint8_t drawEnd = drawStart + lineHeight;
+      if (lineHeight > h) lineHeight = h;      
 
-    // Draw ceiling
-    uint8_t i, color = 14;
-    for (uint8_t y = 0; y < drawStart; ++y) {
-        uint8_t* bufPtr = &buffer[y * w + x];
-        // for (uint8_t i = 0; i < currentStep; ++i) {
-        bufPtr[i] = color;
-        if (currentStep > 1) {
-          bufPtr[i+1] = color;
-          bufPtr[i+2] = color;
-          bufPtr[i+3] = color;
-          // bufPtr[i+4] = color;
-          // bufPtr[i+5] = color;
-        }        
-    }
+        //texturing calculations
+        uint8_t texNum = (worldMap[mapX][mapY] - 1) * 2 + side; //1 subtracted from it so that texture 0 can be used!
+        int8_t drawStart = (-lineHeight >> 1) + (h >> 1);
+        if (drawStart < 0) drawStart = 0;
+        uint8_t drawEnd = drawStart + lineHeight;
 
-    // Draw wall
-    uint8_t texNum = ((worldMap[mapX][mapY] - 1) << 1) + side;
-    qFP16_t wallX = (side == 0) ? qFP16_Add(posY, qFP16_Mul(perpWallDist, rayDirY)) 
-                                : qFP16_Add(posX, qFP16_Mul(perpWallDist, rayDirX));
-    wallX = wallX & 0xFFFF; // Fractional part only
-    uint8_t texX = (wallX << 5) >> 16;
-    if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) texX = texWidth - texX - 1;
+        // Draw ceiling
+        uint8_t i, color;
+        color = 14;
+        for (uint8_t y = 0; y < drawStart; ++y) {
+            uint8_t* bufPtr = &buffer[y * w + x];
+            bufPtr[i] = color;
+            if (currentStep > 1) {
+              bufPtr[i+1] = color;
+              bufPtr[i+2] = color;
+              bufPtr[i+3] = color;
 
-    qFP16_t step = texStepValues[lineHeight];
+            }        
+        }
+        
+ 
 
-    
-    qFP16_t halfLh = qFP16_IntToFP(lineHeight >> 1);
-    
-    qFP16_t texPos = qFP16_Mul(qFP16_Add(qFP16_Sub(qFP16_IntToFP(drawStart), halfH), halfLh), step);
+      FpF16<7> wallX; //where exactly the wall was hit
+      if(side == 0) wallX = posY + perpWallDist * rayDirY;
+      else          wallX = posX + perpWallDist * rayDirX;
+      wallX -= floorFixed((wallX));
 
-    for (uint8_t y = drawStart; y < drawEnd; ++y) {
-      uint8_t texY = (texPos >> 16) & (texHeight - 1);
+      //x coordinate on the texture
+      int texX = int(wallX * FpF16<7>(texWidth));
+      if(side == 0 && rayDirX > FpF16<7>(0)) texX = texWidth - texX - 1;
+      if(side == 1 && rayDirY < FpF16<7>(0)) texX = texWidth - texX - 1;
+
+      // TODO: an integer-only bresenham or DDA like algorithm could make the texture coordinate stepping faster
+      // How much to increase the texture coordinate per screen pixel
+      FpF16<7> step = texStepValues[lineHeight]; 
+      // Starting texture coordinate
+      FpF16<7> texPos = (FpF16<7>(drawStart)  - halfH + FpF16<7>(lineHeight / 2)) * step;
+
+      for (uint8_t y = drawStart; y < drawEnd; ++y) {
+      uint8_t texY = (int)texPos & (texHeight - 1);
       texPos += step;
       color = texture[texNum][(texY << 5) + texX];
       uint8_t* bufPtr = &buffer[y * w + x];
@@ -428,9 +520,6 @@ int raycastFP()
         color = texture[texNum][(texY << 5) + texX + 1];
         bufPtr[i+2] = color;
         bufPtr[i+3] = color;
-        // color = texture[texNum][(texY << 5) + texX + 2];
-        // bufPtr[i+4] = color;
-        // bufPtr[i+5] = color;
       }
     }
     
@@ -444,14 +533,13 @@ int raycastFP()
           bufPtr[i+1] = color;
           bufPtr[i+2] = color;
           bufPtr[i+3] = color;
-          // bufPtr[i+4] = color;
-          // bufPtr[i+5] = color;
         }
     }
   }
   bigMode? drawBufferDouble() : drawBufferRegular();
   return 0;
 }
+
 
 
 
@@ -548,9 +636,9 @@ void draw_map() {
             }
             
             // Draw a wall tile (represented by a white rectangle)
-              // draw_rect(color, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
+              draw_rect(color, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
             } else {
-              // draw_rect(BLACK, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
+              draw_rect(BLACK, i * TILE_SIZE + 1, j * TILE_SIZE + 1, TILE_SIZE, TILE_SIZE);
             }
         } 
       }
@@ -558,21 +646,21 @@ void draw_map() {
 
 void draw_player(){
 
-    qFP16_t l = qFP16_Constant(4);
-    qFP16_t ts = qFP16_Constant(TILE_SIZE);
+    FpF16<7> l(4);
+    FpF16<7> ts(TILE_SIZE);
 
-    uint16_t x = (uint16_t)(qFP16_FPToInt(qFP16_Mul(posX, ts)));
-    uint16_t y = (uint16_t)(qFP16_FPToInt(qFP16_Mul(posY, ts)));
+    uint16_t x = (int)(posX * ts);//  (qFP16_FPToInt(qFP16_Mul(posX, ts)));
+    uint16_t y = (int)(posY * ts);//(qFP16_FPToInt(qFP16_Mul(posY, ts)));
 
-    int8_t lX = (int8_t)(qFP16_FPToInt(qFP16_Mul(dirX, l)));
-    int8_t lY = (int8_t)(qFP16_FPToInt(qFP16_Mul(dirY, l)));
-    int8_t plX = (int8_t)(qFP16_FPToInt(qFP16_Mul(prevDirX, l)));
-    int8_t plY = (int8_t)(qFP16_FPToInt(qFP16_Mul(prevDirY, l)));
+    int8_t lX =  (int)(dirX * l); //(qFP16_FPToInt(qFP16_Mul(dirX, l)));
+    int8_t lY =  (int)(dirY * l); //(qFP16_FPToInt(qFP16_Mul(dirY, l)));
+    int8_t plX = (int)(prevDirX * l); //(qFP16_FPToInt(qFP16_Mul(prevDirX, l)));
+    int8_t plY = (int)(prevDirY * l); //(qFP16_FPToInt(qFP16_Mul(prevDirY, l)));
     
-    // draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY);
-    // draw_pixel(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY);
-    // draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
-    // draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
+    draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY);
+    draw_pixel(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY);
+    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
+    draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
     prevPlayerX = x;
     prevPlayerY = y;
     prevDirX = dirX;
@@ -585,7 +673,8 @@ void handleCalculation() {
     // draw_ui(buffer);
     // draw_map(buffer);
     draw_player();
-    raycastFP();
+    raycastF();
+    // raycastFP();
     // printWalls();
     // drawWalls(buffer);
     gamestate = GAMESTATE_IDLE;
@@ -609,26 +698,40 @@ int16_t main() {
     uint8_t i = 0;
     uint8_t timer = 0;
 
+    // FpF8<4> a(4.2);
+    // FpF8<4> b(3.1);
+    // FpF8<4> c = a + b;
+    // FpF16<7> d(4.2);
+    // FpF16<7> e(3.1);
+    // FpF16<7> f = d + e;
+    // FpF8<4> d8 = a / b; 
+    // FpF16<7> d16 = FpF16<7>(60.0) / FpF16<7>(4.5);
+    // FpF16<7> dx(-1.0);
+    // FpF16<7> delta = fp_abs(FpF16<7>(1) / dx);
+    // printf("delta: %i\n", (int)(delta*100));
+    // printf("c: %i, f: %i\n", (int)(c * 100), (int)(f*100));
+    // printf("d8: %i, h: %i, lineHeight: %i\n", (int)(d8 * 100), h, FP16ToIntPercent(d16));
+    // printf("x16: %i\n", d16.GetRawVal());
     // prepare floor colors array
     // uint8_t r = 64, g = 40, b = 20;
-    for(uint8_t i = 0; i < h; i++){
+    for(i = 0; i < h; i++){
       floorColors[i] = mapValue(i, 0, h, 232, 250);
     }
 
 
-    posX = qFP16_FloatToFP(9.0f);
-    posY = qFP16_FloatToFP(11.0f);  //x and y start position
-    dirX = qFP16_FloatToFP(0.0f);
-    dirY = qFP16_FloatToFP(-1.0f); //initial direction vector
+    // posX = qFP16_FloatToFP(9.0f);
+    // posY = qFP16_FloatToFP(11.0f);  //x and y start position
+    // dirX = qFP16_FloatToFP(0.0f);
+    // dirY = qFP16_FloatToFP(-1.0f); //initial direction vector
 
-    planeX = qFP16_FloatToFP(0.66f);
-    planeY = qFP16_FloatToFP(0.0f); //the 2d raycaster version of camera plane
-    moveSpeed = qFP16_FloatToFP(0.25f); //the constant value is in squares/second
-    sin_r = qFP16_FloatToFP(0.259f); // precomputed value of sin(1 /24 pi  rad)
-    cos_r = qFP16_FloatToFP(0.966f);
+    // planeX = qFP16_FloatToFP(0.66f);
+    // planeY = qFP16_FloatToFP(0.0f); //the 2d raycaster version of camera plane
+    // moveSpeed = qFP16_FloatToFP(0.25f); //the constant value is in squares/second
+    // sin_r = qFP16_FloatToFP(0.259f); // precomputed value of sin(1 /24 pi  rad)
+    // cos_r = qFP16_FloatToFP(0.966f);
 
-    prevPlayerX = (uint16_t)(qFP16_FPToInt(posX) * TILE_SIZE);
-    prevPlayerY = (uint16_t)(qFP16_FPToInt(posY) * TILE_SIZE);
+    prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));//(qFP16_FPToInt(posX) * TILE_SIZE);
+    prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));//(qFP16_FPToInt(posY) * TILE_SIZE);
     prevDirX = dirX;
     prevDirY = dirY;
 
@@ -639,23 +742,33 @@ int16_t main() {
     printf("Precalculating values...\n");
     precalculateRotations();
     
+    // for (i = 0; i < ROTATION_STEPS; i++) {
+    //   printf("cameraXValues[%i]: %i\n", i, FP16ToIntPercent(cameraXValues[i][1]));
+    // }
+
+    // i = 16;
+
+    // FpF16<7> cameraX = cameraXValues[currentRotStep][1];
+    // // FpF16<7> cameraX = value;
+    // printf("i: %i, currentRotStep: %i, cameraX: %i\n", i, currentRotStep, FP16ToIntPercent(cameraX));
+    
 
     // WaitForAnyKey();
 
     
 
-    // init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, x_wrap, true);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, y_wrap, true);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, x_pos_px, 0);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, y_pos_px, 0);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, width_px, SCREEN_WIDTH);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, height_px, SCREEN_HEIGHT);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, xram_data_ptr, 0x0000);
-    xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, 0xFFFF);
+    init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, x_wrap, true);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, y_wrap, true);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, x_pos_px, 0);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, y_pos_px, 0);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, width_px, SCREEN_WIDTH);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, height_px, SCREEN_HEIGHT);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, xram_data_ptr, 0x0000);
+    // xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, 0xFFFF);
 
-    xregn(1, 0, 0, 1, 2);
-    xregn(1, 0, 1, 3, 3, 3, 0xFF00);
+    // xregn(1, 0, 0, 1, 2);
+    // xregn(1, 0, 1, 3, 3, 3, 0xFF00);
     // bpp = bits_per_pixel();
     // erase_canvas();
 
@@ -664,7 +777,7 @@ int16_t main() {
 
     // set_text_color(color(WHITE,bpp==8));
 
-    drawTexture();
+    // drawTexture();
 
     draw_ui();
 
@@ -751,20 +864,17 @@ int16_t main() {
                   dirY = dirYValues[currentRotStep];
                   planeX = planeXValues[currentRotStep];
                   planeY = planeYValues[currentRotStep];
+
                 }
                 if (key(KEY_UP)) {
                   gamestate = GAMESTATE_MOVING;
-                  if(worldMap[qFP16_FPToInt(qFP16_Add(posX, qFP16_Mul(dirX, moveSpeed)))][qFP16_FPToInt(posY)] == false) 
-                    posX = qFP16_Add(posX, qFP16_Mul(dirX, moveSpeed));
-                  if(worldMap[qFP16_FPToInt(posX)][qFP16_FPToInt(qFP16_Add(posY, qFP16_Mul(dirY, moveSpeed)))] == false) 
-                    posY = qFP16_Add(posY, qFP16_Mul(dirY, moveSpeed));
+                  if(worldMap[int(posX + (dirX * moveSpeed) * playerScale)][int(posY)] == false) posX += (dirX * moveSpeed);
+                  if(worldMap[int(posX)][int(posY + (dirY * moveSpeed) * playerScale)] == false) posY +=  (dirY * moveSpeed);
                 }
                 if (key(KEY_DOWN)) {
                   gamestate = GAMESTATE_MOVING;
-                  if(worldMap[qFP16_FPToInt(qFP16_Sub(posX, qFP16_Mul(dirX, moveSpeed)))][qFP16_FPToInt(posY)] == false) 
-                    posX = qFP16_Sub(posX, qFP16_Mul(dirX, moveSpeed));
-                  if(worldMap[qFP16_FPToInt(posX)][qFP16_FPToInt(qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed)))] == false) 
-                    posY = qFP16_Sub(posY, qFP16_Mul(dirY, moveSpeed));
+                  if(worldMap[int(posX - (dirX * moveSpeed) * playerScale)][int(posY)] == false) posX -= (dirX * moveSpeed);
+                  if(worldMap[int(posX)][int(posY - (dirY * moveSpeed) * playerScale)] == false) posY -= (dirY * moveSpeed);
                 }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;

@@ -3,6 +3,10 @@
         "PATH": "C:/llvm-mos/bin:${env:PATH}"
     },
     "files.associations": {
-        "math.h": "c"
+        "math.h": "c",
+        "cmath": "cpp",
+        "array": "cpp",
+        "cstddef": "cpp",
+        "iterator": "cpp"
     }
 }
