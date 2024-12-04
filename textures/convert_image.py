@@ -68,4 +68,4 @@ def conv_spr(name_in, size_x, size_y, name_out):
 
 # Example usage:
 # conv_tile("input_image.png", 16, "output_tile.bin")
-conv_spr("textures/wolf_ui_320x180.png", 320, 180, "textures/wolf_ui_320x180.bin")
+conv_spr("textures/pixel-320x180.png", 320, 180, "textures/pixel-320x180.bin")

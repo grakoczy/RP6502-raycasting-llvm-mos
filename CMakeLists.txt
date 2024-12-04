@@ -7,9 +7,9 @@ project(MY-RP6502-PROJECT)
 add_executable(raycast)
 # rp6502_executable(raycast)
 
-rp6502_asset(raycast 0x10000 textures/wolf_ui_320x180.bin)
+rp6502_asset(raycast 0x10000 textures/pixel-320x180.bin)
 rp6502_executable(raycast
-    wolf_ui_320x180.bin.rp6502
+    pixel-320x180.bin.rp6502
 )
 
 target_sources(raycast PRIVATE

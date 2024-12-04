@@ -19,8 +19,8 @@ using namespace mn::MFixedPoint;
 #define mapHeight 18
 #define SCREEN_WIDTH 320 
 #define SCREEN_HEIGHT 180 
-#define WINDOW_WIDTH 128
-#define WINDOW_HEIGTH 64
+#define WINDOW_WIDTH 96
+#define WINDOW_HEIGTH 54
 #define TILE_SIZE 2
 #define SCALE 2
 #define MIN_SCALE 8
@@ -35,8 +35,8 @@ FpF16<7> planeX(0.66);
 FpF16<7> planeY(0.0); //the 2d raycaster version of camera plane
 FpF16<7> moveSpeed(0.2); //the constant value is in squares/second
 FpF16<7> playerScale(3);
-FpF16<7> sin_r(0.259); // precomputed value of sin(0.1 rad)
-FpF16<7> cos_r(0.966);
+FpF16<7> sin_r(0.19509032201); // precomputed value of sin(pi 1/12 rad)
+FpF16<7> cos_r(0.9807852804); 
 
 FpF16<7> prevDirX, prevDirY;                                                       
 
@@ -46,15 +46,15 @@ int8_t currentStep = 1;
 int8_t movementStep = 4; 
 
 
-uint8_t xOffset = 96;
-uint8_t yOffset = 30;
+uint8_t xOffset = 64;
+uint8_t yOffset = 18;
 
 
 const uint8_t w = WINDOW_WIDTH;
 const uint8_t h = WINDOW_HEIGTH; 
 
 bool wireMode = false;
-bool bigMode = false;
+bool bigMode = true;
 
 uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
@@ -68,7 +68,7 @@ uint8_t gamestate_prev = 1;
 #define GAMESTATE_MOVING 2
 #define GAMESTATE_CALCULATING 3
 
-#define ROTATION_STEPS 24
+#define ROTATION_STEPS 32
 
 FpF16<7> dirXValues[ROTATION_STEPS];
 FpF16<7> dirYValues[ROTATION_STEPS];
@@ -157,127 +157,111 @@ inline int FP16ToIntPercent(FpF16<7> number) {
     return static_cast<int>((float)(number) * 100);
 }
 
+
 void drawBufferDouble() {
-    RIA.step0 = 1; // Step size fixed
+    uint16_t base_row_addr = SCREEN_WIDTH * yOffset + xOffset;
 
-    // Loop through each row
+    // Precompute base address offsets for each row in the buffer
     for (uint8_t j = 0; j < h; j++) {
-        uint16_t row_addr = SCREEN_WIDTH * (yOffset + (j << 1)) + xOffset;
-        uint16_t bufferIndex = j * WINDOW_WIDTH;
+        uint16_t row_addr = base_row_addr + (j * SCREEN_WIDTH * 2); // Each buffer row spans 2 screen rows
 
-        // Cache next row address
-        uint16_t row_addr_next = row_addr + SCREEN_WIDTH;
+        uint8_t* row_buffer = &buffer[j * WINDOW_WIDTH];
 
-        // Access buffer directly using a pointer
-        uint8_t* bufPtr = &buffer[bufferIndex];
+        // Unroll inner loop for 8-pixel chunks
+        uint8_t i = 0;
+        while (i < w) {
+            uint8_t color0 = row_buffer[i];
+            uint8_t color1 = row_buffer[i + 1];
+            uint8_t color2 = row_buffer[i + 2];
+            uint8_t color3 = row_buffer[i + 3];
+            uint8_t color4 = row_buffer[i + 4];
+            uint8_t color5 = row_buffer[i + 5];
+            uint8_t color6 = row_buffer[i + 6];
+            uint8_t color7 = row_buffer[i + 7];
 
-        // Iterate through columns in blocks
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint16_t addr1 = row_addr + (i << 1);
-            uint16_t addr2 = row_addr_next + (i << 1);
-
-            // Write all 8 blocks using unrolled loop
-            uint8_t color0 = *bufPtr++;
-            uint8_t color1 = *bufPtr++;
-            uint8_t color2 = *bufPtr++;
-            uint8_t color3 = *bufPtr++;
-            uint8_t color4 = *bufPtr++;
-            uint8_t color5 = *bufPtr++;
-            uint8_t color6 = *bufPtr++;
-            uint8_t color7 = *bufPtr++;
-
-            // Block 0
-            RIA.addr0 = addr1;
+            // Write to the first row of the 2x2 block
+            RIA.addr0 = row_addr + (i * 2);
             RIA.rw0 = color0;
             RIA.rw0 = color0;
-            RIA.addr0 = addr2;
-            RIA.rw0 = color0;
-            RIA.rw0 = color0;
-
-            // Block 1
-            RIA.addr0 = addr1 + 2;
             RIA.rw0 = color1;
             RIA.rw0 = color1;
-            RIA.addr0 = addr2 + 2;
-            RIA.rw0 = color1;
-            RIA.rw0 = color1;
-
-            // Block 2
-            RIA.addr0 = addr1 + 4;
             RIA.rw0 = color2;
             RIA.rw0 = color2;
-            RIA.addr0 = addr2 + 4;
-            RIA.rw0 = color2;
-            RIA.rw0 = color2;
-
-            // Block 3
-            RIA.addr0 = addr1 + 6;
-            RIA.rw0 = color3;
-            RIA.rw0 = color3;
-            RIA.addr0 = addr2 + 6;
             RIA.rw0 = color3;
             RIA.rw0 = color3;
 
-            // Block 4
-            RIA.addr0 = addr1 + 8;
-            RIA.rw0 = color4;
-            RIA.rw0 = color4;
-            RIA.addr0 = addr2 + 8;
-            RIA.rw0 = color4;
-            RIA.rw0 = color4;
+            // Write to the second row of the 2x2 block
+            RIA.addr0 = row_addr + SCREEN_WIDTH + (i * 2);
+            RIA.rw0 = color0;
+            RIA.rw0 = color0;
+            RIA.rw0 = color1;
+            RIA.rw0 = color1;
+            RIA.rw0 = color2;
+            RIA.rw0 = color2;
+            RIA.rw0 = color3;
+            RIA.rw0 = color3;
 
-            // Block 5
-            RIA.addr0 = addr1 + 10;
-            RIA.rw0 = color5;
-            RIA.rw0 = color5;
-            RIA.addr0 = addr2 + 10;
-            RIA.rw0 = color5;
-            RIA.rw0 = color5;
-
-            // Block 6
-            RIA.addr0 = addr1 + 12;
-            RIA.rw0 = color6;
-            RIA.rw0 = color6;
-            RIA.addr0 = addr2 + 12;
-            RIA.rw0 = color6;
-            RIA.rw0 = color6;
-
-            // Block 7
-            RIA.addr0 = addr1 + 14;
-            RIA.rw0 = color7;
-            RIA.rw0 = color7;
-            RIA.addr0 = addr2 + 14;
-            RIA.rw0 = color7;
-            RIA.rw0 = color7;
-
+            i += 4;
         }
     }
 }
+
+
+
+// void drawBufferRegular() {
+//     // Loop through each row
+//     for (uint8_t j = 0; j < h; j++) {
+//         // Calculate the starting address of the row
+//         uint16_t row_addr = ((SCREEN_WIDTH) * (yOffset + j)) + (xOffset);
+
+//         // Set the initial address and step for the row
+//         RIA.addr0 = row_addr;
+//         RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+
+//         // Fill the row with the color
+//         for (uint8_t i = 0; i < w; i += 8) {
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 1];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 2];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 3];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 4];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 5];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 6];
+//             RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 7];
+//         }
+//     }
+// }
 
 
 void drawBufferRegular() {
-    // Loop through each row
+    uint16_t base_row_addr = SCREEN_WIDTH * yOffset + xOffset;
+
+    // Precompute base address offsets for each row
     for (uint8_t j = 0; j < h; j++) {
-        // Calculate the starting address of the row
-        uint16_t row_addr = ((SCREEN_WIDTH) * (yOffset + j)) + (xOffset);
+        uint16_t row_addr = base_row_addr + (j * SCREEN_WIDTH);
 
-        // Set the initial address and step for the row
+        // Set the address and step in RIA
         RIA.addr0 = row_addr;
-        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+        RIA.step0 = 1; // Move 2 bytes per pixel
 
-        // Fill the row with the color
-        for (uint8_t i = 0; i < w; i += 8) {
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 1];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 2];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 3];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 4];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 5];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 6];
-            RIA.rw0 = buffer[j * WINDOW_WIDTH + i + 7];
+        uint8_t* row_buffer = &buffer[j * WINDOW_WIDTH];
+
+        // Unrolled inner loop for 8-pixel chunks
+        uint8_t i = 0;
+        while (i < w) {
+            RIA.rw0 = row_buffer[i];
+            RIA.rw0 = row_buffer[i + 1];
+            RIA.rw0 = row_buffer[i + 2];
+            RIA.rw0 = row_buffer[i + 3];
+            RIA.rw0 = row_buffer[i + 4];
+            RIA.rw0 = row_buffer[i + 5];
+            RIA.rw0 = row_buffer[i + 6];
+            RIA.rw0 = row_buffer[i + 7];
+            i += 8;
         }
     }
 }
+
 
 void precalculateRotations() {
     // Starting values
@@ -513,7 +497,7 @@ int raycastF()
       uint8_t texY = (int)texPos & (texHeight - 1);
       texPos += step;
       color = texture[texNum][(texY << 5) + texX];
-      uint8_t* bufPtr = &buffer[y * w + x];
+      uint8_t* bufPtr = &buffer[y * w + x]; 
       bufPtr[i] = color;
       if (currentStep > 1) {
         bufPtr[i+1] = color;
@@ -644,28 +628,72 @@ void draw_map() {
       }
 } 
 
-void draw_player(){
-
-    FpF16<7> l(4);
+void draw_player() {
+    FpF16<7> l(7);
     FpF16<7> ts(TILE_SIZE);
 
-    uint16_t x = (int)(posX * ts);//  (qFP16_FPToInt(qFP16_Mul(posX, ts)));
-    uint16_t y = (int)(posY * ts);//(qFP16_FPToInt(qFP16_Mul(posY, ts)));
+    uint16_t x = 158;
+    uint16_t y = 149;
 
-    int8_t lX =  (int)(dirX * l); //(qFP16_FPToInt(qFP16_Mul(dirX, l)));
-    int8_t lY =  (int)(dirY * l); //(qFP16_FPToInt(qFP16_Mul(dirY, l)));
-    int8_t plX = (int)(prevDirX * l); //(qFP16_FPToInt(qFP16_Mul(prevDirX, l)));
-    int8_t plY = (int)(prevDirY * l); //(qFP16_FPToInt(qFP16_Mul(prevDirY, l)));
-    
-    draw_line(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY);
-    draw_pixel(COLOR_FROM_RGB8(0, 0, 0), prevPlayerX, prevPlayerY);
-    draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
-    draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
+    int8_t lX = (int)(dirX * l);  // calculate line direction
+    int8_t lY = (int)(dirY * l);
+    int8_t plX = (int)(prevDirX * l);
+    int8_t plY = (int)(prevDirY * l);
+
+    // Compass needle side length
+    FpF16<7> arrowLength(3);
+    int8_t arrowX1 = (int)(-dirY * arrowLength);  // Perpendicular offset
+    int8_t arrowY1 = (int)(dirX * arrowLength);
+    int8_t prevArrowX1 = (int)(-prevDirY * arrowLength);  // Perpendicular offset
+    int8_t prevArrowY1 = (int)(prevDirX * arrowLength);
+
+    // Clear the previous compass needle
+    draw_line(243, x + prevArrowX1 , y + prevArrowY1, x + plX, y + plY);  // left wing
+    draw_line(243, x - prevArrowX1 , y - prevArrowY1, x + plX, y + plY);  // right wing
+    draw_line(243, x + prevArrowX1 , y + prevArrowY1, x - plX, y - plY);  // left wing
+    draw_line(243, x - prevArrowX1 , y - prevArrowY1, x - plX, y - plY);  // right wing
+
+    // Draw the new compass needle
+    // draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);  // main line
+    draw_line(9, x + arrowX1 , y + arrowY1, x + lX, y + lY);  // left wing
+    draw_line(9, x - arrowX1 , y - arrowY1, x + lX, y + lY);  // right wing
+    draw_line(4, x + arrowX1 , y + arrowY1, x - lX, y - lY);  // left wing
+    draw_line(4, x - arrowX1 , y - arrowY1, x - lX, y - lY);  // right wing
+    draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);  // Draw central pixel
+
+    // Update previous position and direction
     prevPlayerX = x;
     prevPlayerY = y;
     prevDirX = dirX;
     prevDirY = dirY;
 }
+
+
+// void draw_player(){
+
+//     FpF16<7> l(8);
+//     FpF16<7> ts(TILE_SIZE);
+
+//     // uint16_t x = (int)(posX * ts);
+//     // uint16_t y = (int)(posY * ts);
+
+//     uint16_t x = 159;
+//     uint16_t y = 150;
+
+//     int8_t lX =  (int)(dirX * l); // calculate line direction
+//     int8_t lY =  (int)(dirY * l); 
+//     int8_t plX = (int)(prevDirX * l); 
+//     int8_t plY = (int)(prevDirY * l); 
+    
+//     draw_line (243, prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY); // clear previous line
+//     draw_pixel(243, prevPlayerX, prevPlayerY);
+//     draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
+//     draw_pixel(COLOR_FROM_RGB8(247, 118, 32), x, y);
+//     prevPlayerX = x;
+//     prevPlayerY = y;
+//     prevDirX = dirX;
+//     prevDirY = dirY;
+// }
 
 void handleCalculation() {
 
