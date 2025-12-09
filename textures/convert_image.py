@@ -41,18 +41,48 @@ def closest_ansi_color(r, g, b):
             closest_index = i
     return closest_index
 
-# def conv_tile(name_in, size, name_out):
-#     with Image.open(name_in) as im:
-#         with open("./" + name_out, "wb") as o:
-#             rgb_im = im.convert("RGB")
-#             im2 = rgb_im.resize(size=[size, size])
-#             for y in range(0, im2.height):
-#                 for x in range(0, im2.width):
-#                     r, g, b = im2.getpixel((x, y))
-#                     ansi_color = rgb_to_ansi(r, g, b)
-#                     o.write(ansi_color.to_bytes(1, byteorder="little", signed=False))
 
-def conv_spr(name_in, size_x, size_y, name_out):
+def rp6502_rgb_tile_bpp4(r1,g1,b1,r2,g2,b2):
+    return (((b1>>7)<<6)|((g1>>7)<<5)|((r1>>7)<<4)|((b2>>7)<<2)|((g2>>7)<<1)|(r2>>7))
+
+def conv_tile(name_in, size, name_out):
+    with Image.open(name_in) as im:
+        with open("./" + name_out, "wb") as o:
+            rgb_im = im.convert("RGB")
+            im2 = rgb_im.resize(size=[size,size])
+            for y in range(0, im2.height):
+                for x in range(0, im2.width, 2):
+                    r1, g1, b1 = im2.getpixel((x, y))
+                    r2, g2, b2 = im2.getpixel((x+1, y))
+                    o.write(
+                        rp6502_rgb_tile_bpp4(r1,g1,b1,r2,g2,b2).to_bytes(
+                            1, byteorder="little", signed=False
+                        )
+                    )
+
+def rp6502_rgb_sprite_bpp16(r,g,b):
+    if r==0 and g==0 and b==0:
+        return 0
+    else:
+        return ((((b>>3)<<11)|((g>>3)<<6)|(r>>3))|1<<5)
+
+def conv_spr(name_in, size, name_out):
+    print("converting: ", name_in)
+    with Image.open(name_in) as im:
+        with open("./" + name_out, "wb") as o:
+            rgb_im = im.convert("RGB")
+            im2 = rgb_im.resize(size=[size,size])
+            for y in range(0, im2.height):
+                for x in range(0, im2.width):
+                    r, g, b = im2.getpixel((x, y))
+                    o.write(
+                        rp6502_rgb_sprite_bpp16(r,g,b).to_bytes(
+                            2, byteorder="little", signed=False
+                        )
+                    )
+
+# convert whole image matching colors to closest ansi color
+def conv_image(name_in, size_x, size_y, name_out):
     with Image.open(name_in) as im:
         with open("./" + name_out, "wb") as o:
             rgb_im = im.convert("RGB")
@@ -68,4 +98,5 @@ def conv_spr(name_in, size_x, size_y, name_out):
 
 # Example usage:
 # conv_tile("input_image.png", 16, "output_tile.bin")
-conv_spr("textures/pixel-320x180.png", 320, 180, "textures/pixel-320x180.bin")
+conv_image("textures/steampunk_control_panel_ansi_palette_320x180.png", 320, 180, "textures/pixel-320x180.bin")
+# conv_spr("textures/compas_needle40x40.png", 32, "textures/compas_needle.bin")

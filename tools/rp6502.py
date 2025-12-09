@@ -91,23 +91,52 @@ class Monitor:
             addr, data = rom.next_rom_data(addr)
 
     def wait_for_prompt(self, prompt, timeout=DEFAULT_TIMEOUT):
-        """Wait for prompt."""
-        prompt = bytes(prompt, "ascii")
-        start = time.monotonic()
-        while True:
-            if len(prompt) == 1:
-                data = self.serial.read()
-            else:
-                data = self.serial.read_until()
-            if data[0:1] == b"?":
-                monitor_result = data.decode("ascii")
-                monitor_result += self.serial.read_until().decode("ascii").strip()
-                raise RuntimeError(monitor_result)
-            if data == prompt:
-                break
-            if len(data) == 0:
-                if time.monotonic() - start > timeout:
-                    raise TimeoutError()
+        """Wait for prompt, ignoring ANSI codes and handling errors."""
+        prompt_bytes = bytes(prompt, "ascii")
+
+        # Use pyserial's read_until, which is much more efficient and robust.
+        # We set a timeout specifically for this operation.
+        original_timeout = self.serial.timeout
+        self.serial.timeout = timeout
+        
+        # This will read all data from the serial port until the prompt is found
+        # or the timeout occurs.
+        response = self.serial.read_until(prompt_bytes)
+
+        # Restore the original timeout for other operations
+        self.serial.timeout = original_timeout
+
+        # After reading, check for a real monitor error in the response.
+        # A real error is typically a '?' followed by capital letters and a newline.
+        # e.g., b'?SYNTAX ERROR\r\n'
+        error_match = re.search(b"\\?([A-Z ]+)\\r", response)
+        if error_match:
+            error_message = error_match.group(0).decode("ascii").strip()
+            raise RuntimeError(error_message)
+
+        # If the response does not end with our prompt, it means we timed out.
+        if not response.endswith(prompt_bytes):
+            # Include the partial response in the error for better debugging.
+            raise TimeoutError(f"Timed out waiting for prompt '{prompt}'. Received: {response!r}")
+    # def wait_for_prompt(self, prompt, timeout=DEFAULT_TIMEOUT):
+    #     """Wait for prompt."""
+    #     prompt = bytes(prompt, "ascii")
+    #     start = time.monotonic()
+    #     while True:
+    #         print(prompt)
+    #         if len(prompt) == 1:
+    #             data = self.serial.read()
+    #         else:
+    #             data = self.serial.read_until()
+    #         if data[0:1] == b"?":
+    #             monitor_result = data.decode("ascii")
+    #             monitor_result += self.serial.read_until().decode("ascii").strip()
+    #             raise RuntimeError(monitor_result)
+    #         if data == prompt:
+    #             break
+    #         if len(data) == 0:
+    #             if time.monotonic() - start > timeout:
+    #                 raise TimeoutError()
 
 
 class ROM:

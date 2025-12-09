@@ -475,8 +475,19 @@ public:
     //     stream << obj.ToDouble();
     //     return stream;
     // }
+    /// \brief      Creates a fixed-point number directly from its raw integer representation.
+    /// \details    This is a factory function for performance-critical code where the
+    ///             raw value has been calculated externally.
+    static FpF FromRaw(BaseType raw) {
+        return FpF(raw, RAW_VALUE_TAG);
+    }
 
 private:
+    /// \brief      A tag to differentiate the private raw value constructor.
+    enum RawValueConstructorTag { RAW_VALUE_TAG };
+
+    /// \brief      Private constructor to create an FpF from a raw value.
+    FpF(BaseType raw, RawValueConstructorTag) : rawVal_(raw) {}
 
     /// \brief		The fixed-point number is stored in this basic data type.
     BaseType rawVal_;
