@@ -166,6 +166,193 @@ inline int FP16ToIntPercent(FpF16<7> number) {
     return static_cast<int>((float)(number) * 100);
 }
 
+void drawBufferScanline_2on1off() {
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    uint8_t* buffer_ptr = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        // Prepare addresses for two consecutive rows
+        uint16_t addr1 = screen_addr;
+        uint16_t addr2 = screen_addr + SCREEN_WIDTH;
+        
+        uint8_t* p = buffer_ptr;
+        
+        for (uint8_t i = 0; i < w; i += 8) {
+            // Pre-load 8 pixels from source buffer
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+
+            // Write to Row 1 (Horizontal 2x scale)
+            RIA.addr0 = addr1;
+            RIA.step0 = 1;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
+            addr1 += 16;
+
+            // Write to Row 2 (Horizontal 2x scale)
+            RIA.addr0 = addr2;
+            RIA.step0 = 1;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
+            addr2 += 16;
+        }
+
+        // Advance screen address by 3 rows (2 drawn, 1 skipped)
+        screen_addr += SCREEN_WIDTH * 3;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+}
+
+void drawBufferScanline_1on1off() {
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    uint8_t* buffer_ptr = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        RIA.addr0 = screen_addr;
+        RIA.step0 = 1;
+
+        uint8_t* p = buffer_ptr;
+        for (uint8_t i = 0; i < w; i += 8) {
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+
+            // Write only one row, but keep horizontal doubling
+            RIA.rw0 = c0; RIA.rw0 = c0;
+            RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2;
+            RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4;
+            RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6;
+            RIA.rw0 = c7; RIA.rw0 = c7;
+        }
+
+        // Jump 2 lines forward on the screen
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+}
+
+void drawBufferScanline_Interlaced() {
+    // static variable persists between function calls
+    static bool draw_odd = false; 
+    
+    // Base starting address
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    
+    // If it's the odd frame, shift the starting line down by one screen row
+    if (draw_odd) {
+        screen_addr += SCREEN_WIDTH;
+    }
+
+    uint8_t* buffer_ptr = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        RIA.addr0 = screen_addr;
+        RIA.step0 = 1;
+
+        uint8_t* p = buffer_ptr;
+        
+        // Loop through the width of the window
+        for (uint8_t i = 0; i < w; i += 8) {
+            // Unrolled loading of 8 pixels for speed
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+
+            // Horizontal doubling (2x scale)
+            RIA.rw0 = c0; RIA.rw0 = c0;
+            RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2;
+            RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4;
+            RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6;
+            RIA.rw0 = c7; RIA.rw0 = c7;
+        }
+
+        // Jump 2 lines forward on the screen to leave a gap for the other frame
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+
+    // Flip the toggle for the next frame
+    draw_odd = !draw_odd;
+}
+
+void drawBufferScanline_Mixed() {
+    static bool draw_odd = false;
+    
+    // Define our segment boundaries based on WINDOW_HEIGTH (54)
+    const uint8_t h1 = h / 6;          // 1/6 of height (9 lines)
+    const uint8_t h2 = (h * 5) / 6;    // Start of the last 1/6 (45 lines)
+    
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    uint8_t* buffer_ptr = buffer;
+
+    // --- SECTION 1: Top 1/6 (Regular Double Draw) ---
+    for (uint8_t j = 0; j < h1; ++j) {
+        // We write to two screen rows to maintain 2x vertical scale
+        for (uint8_t row = 0; row < 2; ++row) {
+            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
+            RIA.step0 = 1;
+            uint8_t* p = buffer_ptr;
+            for (uint8_t i = 0; i < w; i += 8) {
+                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
+            }
+        }
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+
+    // --- SECTION 2: Middle 2/3 (Interlaced Draw) ---
+    for (uint8_t j = h1; j < h2; ++j) {
+        // Only write to the even OR odd screen row based on the frame phase
+        RIA.addr0 = screen_addr + (draw_odd ? SCREEN_WIDTH : 0);
+        RIA.step0 = 1;
+        uint8_t* p = buffer_ptr;
+        for (uint8_t i = 0; i < w; i += 8) {
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
+        }
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+
+    // --- SECTION 3: Bottom 1/6 (Regular Double Draw) ---
+    for (uint8_t j = h2; j < h; ++j) {
+        for (uint8_t row = 0; row < 2; ++row) {
+            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
+            RIA.step0 = 1;
+            uint8_t* p = buffer_ptr;
+            for (uint8_t i = 0; i < w; i += 8) {
+                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
+            }
+        }
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+
+    draw_odd = !draw_odd;
+}
+
 void drawBufferDouble_v3() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     uint8_t* buffer_ptr = buffer;
@@ -548,7 +735,7 @@ int raycastF() {
         uint8_t color;
         
         if (stepSize == 1) {
-            color = 14;
+            color = 235;
             for (zp_y = 0; zp_y < drawStart; ++zp_y) {
                 *bufPtr = color;
                 bufPtr += w;
@@ -565,7 +752,7 @@ int raycastF() {
             }
         } 
         else if (stepSize == 2) {
-            color = 14;
+            color = 235;
             for (zp_y = 0; zp_y < drawStart; ++zp_y) {
                 bufPtr[0] = color;
                 bufPtr[1] = color;
@@ -588,7 +775,13 @@ int raycastF() {
         }
     }
     
-    bigMode ? drawBufferDouble_v3() : drawBufferRegular();
+    // bigMode ? drawBufferDouble_v3() : drawBufferRegular();
+    // bigMode ? drawBufferScanline_Interlaced() : drawBufferRegular();
+    if (!bigMode) {
+        stepSize == 1 ? drawBufferDouble_v3() : drawBufferScanline_Interlaced();
+    } else {
+        drawBufferDouble_v3();
+    }
     return 0;
 }
 
