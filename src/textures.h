@@ -9,7 +9,7 @@
 #define NUM_TEXTURES 4
 
 // Texture base address in XRAM (set this in CMakeLists.txt)
-#define TEXTURE_BASE 0x10000
+#define TEXTURE_BASE 0x1E100
 
 // Helper function to get texture pixel
 inline uint8_t getTexturePixel(uint8_t texNum, uint16_t offset) {

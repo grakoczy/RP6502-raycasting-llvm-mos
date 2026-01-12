@@ -8,7 +8,7 @@
 #include "colors.h"
 #include "usb_hid_keys.h"
 #include "bitmap_graphics.hpp"
-#include "textures32.h"
+#include "textures.h"
 #include "FpF.hpp"
 #include "maze.h"
 
@@ -28,7 +28,8 @@ using namespace mn::MFixedPoint;
 #define WINDOW_HEIGTH 54
 #define SCALE 2
 #define MIN_SCALE 8
-#define MAX_SCALE 2
+#define ROTATION_STEPS 32
+
 
 FpF16<7> posX(9);
 FpF16<7> posY(11);
@@ -38,7 +39,7 @@ FpF16<7> planeX(0.66);
 FpF16<7> planeY(0.0); //the 2d raycaster version of camera plane
 FpF16<7> moveSpeed(0.2); //the constant value is in squares/second
 FpF16<7> playerScale(5);
-FpF16<7> sin_r(0.2588190451); // precomputed value of sin(pi 1/12 rad)
+FpF16<7> sin_r(0.2588190451); // precomputed value of sin(pi 1/16 rad)
 FpF16<7> cos_r(0.96592582628); 
 
 uint16_t startX = 151+(26-mapWidth)/2;
@@ -76,7 +77,6 @@ uint8_t gamestate_prev = 1;
 #define GAMESTATE_MOVING 2
 #define GAMESTATE_CALCULATING 3
 
-#define ROTATION_STEPS 32
 
 uint8_t lineHeightTable[1024]; 
 FpF16<7> dirXValues[ROTATION_STEPS];
@@ -90,6 +90,7 @@ FpF16<7> rayDirYValues[ROTATION_STEPS][WINDOW_WIDTH];
 FpF16<7> deltaDistXValues[ROTATION_STEPS][WINDOW_WIDTH];
 FpF16<7> deltaDistYValues[ROTATION_STEPS][WINDOW_WIDTH];
 int16_t texOffsetTable[64]; 
+uint8_t texColumnBuffer[32];  // Buffer for pre-fetching columns
 
 uint8_t currentRotStep = 1; // Tracks the current rotation step
 
@@ -163,61 +164,6 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
 
 inline int FP16ToIntPercent(FpF16<7> number) {
     return static_cast<int>((float)(number) * 100);
-}
-
-void drawBufferDouble() {
-    // Start with the base addresses.
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    // The amount to advance the pointers on each new row.
-    const uint16_t screen_stride = SCREEN_WIDTH * 2;
-    const uint8_t buffer_stride = WINDOW_WIDTH;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        // --- First Scaled Row ---
-        // Set address and step ONCE per row for maximum speed.
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-
-        uint8_t* p = buffer_ptr; // Use a temporary pointer for the inner loop.
-        for (uint8_t i = 0; i < w; i += 4) {
-            uint8_t color0 = p[0];
-            uint8_t color1 = p[1];
-            uint8_t color2 = p[2];
-            uint8_t color3 = p[3];
-            p += 4;
-
-            // Write each color twice for 2x horizontal scaling.
-            RIA.rw0 = color0; RIA.rw0 = color0;
-            RIA.rw0 = color1; RIA.rw0 = color1;
-            RIA.rw0 = color2; RIA.rw0 = color2;
-            RIA.rw0 = color3; RIA.rw0 = color3;
-        }
-
-        // --- Second Scaled Row ---
-        // Set the address for the next line down.
-        RIA.addr0 = screen_addr + SCREEN_WIDTH;
-        RIA.step0 = 1;
-
-        p = buffer_ptr; // Reset the temporary pointer.
-        for (uint8_t i = 0; i < w; i += 4) {
-            uint8_t color0 = p[0];
-            uint8_t color1 = p[1];
-            uint8_t color2 = p[2];
-            uint8_t color3 = p[3];
-            p += 4;
-
-            RIA.rw0 = color0; RIA.rw0 = color0;
-            RIA.rw0 = color1; RIA.rw0 = color1;
-            RIA.rw0 = color2; RIA.rw0 = color2;
-            RIA.rw0 = color3; RIA.rw0 = color3;
-        }
-
-        // Advance to the next row using fast addition instead of multiplication.
-        screen_addr += screen_stride;
-        buffer_ptr += buffer_stride;
-    }
 }
 
 void drawBufferDouble_v3() {
@@ -309,6 +255,59 @@ void drawBufferRegular() {
     }
 }
 
+// Define the exact sizes to avoid confusion
+#define RAY_DATA_SIZE 768    // 96 width * 2 bytes * 4 tables
+#define VECTOR_DATA_SIZE 8   // 4 values * 2 bytes
+#define TOTAL_STEP_SIZE (RAY_DATA_SIZE + VECTOR_DATA_SIZE) // 776 bytes
+
+// void loadRotationStep(uint8_t step) {
+//     uint32_t stepBaseAddr = TABLES_BASE + ((uint32_t)step * TOTAL_STEP_SIZE);
+    
+//     // DEBUG: Print the calculated address
+//     printf("Loading step %d from address 0x%lX (decimal: %lu)\n", 
+//            step, stepBaseAddr, stepBaseAddr);
+
+//     // Fetch ray data - reading in little-endian format
+//     auto fetchChunk = [&](uint32_t addr, int16_t* dest) {
+//         RIA.addr0 = addr;
+//         RIA.step0 = 1;
+//         for(int i = 0; i < WINDOW_WIDTH; i++) {
+//             uint8_t low = RIA.rw0;
+//             uint8_t high = RIA.rw0;
+//             dest[i] = (int16_t)(low | (high << 8));
+//         }
+//     };
+
+//     fetchChunk(stepBaseAddr, activeRayDirX);
+//     fetchChunk(stepBaseAddr + ROW_SIZE_BYTES, activeRayDirY);
+//     fetchChunk(stepBaseAddr + (ROW_SIZE_BYTES*2), activeDeltaDistX);
+//     fetchChunk(stepBaseAddr + (ROW_SIZE_BYTES*3), activeDeltaDistY);
+
+//     // Fetch player vectors
+//     uint32_t vectorAddr = stepBaseAddr + RAY_DATA_SIZE;
+//     printf("  Vector address: 0x%lX (offset from base: %d)\n", 
+//            vectorAddr, RAY_DATA_SIZE);
+    
+//     RIA.addr0 = vectorAddr; 
+//     RIA.step0 = 1;
+
+//     int16_t raw_vals[4];
+//     for (int i = 0; i < 4; i++) {
+//         uint8_t low = RIA.rw0;
+//         uint8_t high = RIA.rw0;
+//         raw_vals[i] = (int16_t)(low | (high << 8));
+//     }
+    
+//     printf("  Raw values: dirX=%d dirY=%d planeX=%d planeY=%d\n",
+//            raw_vals[0], raw_vals[1], raw_vals[2], raw_vals[3]);
+    
+//     dirX = FpF16<7>::FromRaw(raw_vals[0]);
+//     dirY = FpF16<7>::FromRaw(raw_vals[1]);
+//     planeX = FpF16<7>::FromRaw(raw_vals[2]);
+//     planeY = FpF16<7>::FromRaw(raw_vals[3]);
+// }
+
+
 void precalculateRotations() {
     // Starting values
     FpF16<7> currentDirX = dirX;
@@ -317,8 +316,6 @@ void precalculateRotations() {
     FpF16<7> currentPlaneY = planeY;
 
     
-    
-
     invW = FpF16<7>(1) / FpF16<7>(w); // qFP16_Div(one, qFP16_IntToFP(w));
     FpF16<7> fw =  FpF16<7>(w);
 
@@ -540,7 +537,8 @@ int raycastF() {
         if(zp_side == 0 && rayDirXRaw > 0) texX = texWidth - texX - 1;
         if(zp_side == 1 && rayDirYRaw < 0) texX = texWidth - texX - 1;
 
-        uint8_t* texPtr = &texture[texNum][texX];
+        // uint8_t* texPtr = &texture[texNum][texX];
+        fetchTextureColumn(texNum, texX);
         int16_t raw_step = texStepValues[lineHeight].GetRawVal();
         int16_t raw_texPos = (lineHeight > h) ? 
             texOffsetTable[(lineHeight > 63) ? 63 : lineHeight] : 0;
@@ -557,12 +555,12 @@ int raycastF() {
             }
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
-                *bufPtr = texPtr[texYOffsets[texY]];  // OPTIMIZED!
+                *bufPtr = texColumnBuffer[texY];
                 raw_texPos += raw_step;
                 bufPtr += w;
             }
             for (zp_y = drawEnd; zp_y < h; ++zp_y) {
-                *bufPtr = floorColorPtr[zp_y];  // OPTIMIZED!
+                *bufPtr = floorColorPtr[zp_y];  
                 bufPtr += w;
             }
         } 
@@ -575,14 +573,14 @@ int raycastF() {
             }
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
-                color = texPtr[texYOffsets[texY]];  // OPTIMIZED!
+                color = texColumnBuffer[texY];
                 bufPtr[0] = color;
                 bufPtr[1] = color;
                 raw_texPos += raw_step;
                 bufPtr += w;
             }
             for (zp_y = drawEnd; zp_y < h; ++zp_y) {
-                color = floorColorPtr[zp_y];  // OPTIMIZED!
+                color = floorColorPtr[zp_y];  
                 bufPtr[0] = color;
                 bufPtr[1] = color;
                 bufPtr += w;
@@ -625,35 +623,35 @@ void print_map() {
     }
 }
 
-void drawTexture() {
-    // Loop through the screen's height
-    for (uint16_t y = 0; y < SCREEN_HEIGHT; y++) {
-        // Compute the corresponding Y coordinate in the texture
-        uint8_t texY = y % texHeight;
+// void drawTexture() {
+//     // Loop through the screen's height
+//     for (uint16_t y = 0; y < SCREEN_HEIGHT; y++) {
+//         // Compute the corresponding Y coordinate in the texture
+//         uint8_t texY = y % texHeight;
 
-        // Compute the base address of the current screen row
-        uint16_t row_addr = y * SCREEN_WIDTH;
+//         // Compute the base address of the current screen row
+//         uint16_t row_addr = y * SCREEN_WIDTH;
 
-        // Set the starting address for the row
-        RIA.addr0 = row_addr;
-        RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
+//         // Set the starting address for the row
+//         RIA.addr0 = row_addr;
+//         RIA.step0 = 1; // Move 2 bytes per pixel in 16bpp mode
 
-        // Loop through the screen's width
-        for (uint16_t x = 0; x < SCREEN_WIDTH; x++) {
-            // Compute the corresponding X coordinate in the texture
-            uint8_t texX = x % texWidth;
+//         // Loop through the screen's width
+//         for (uint16_t x = 0; x < SCREEN_WIDTH; x++) {
+//             // Compute the corresponding X coordinate in the texture
+//             uint8_t texX = x % texWidth;
 
-            // Compute the texture index
-            uint16_t texIndex = (texY * texWidth) + texX;
+//             // Compute the texture index
+//             uint16_t texIndex = (texY * texWidth) + texX;
 
-            // Retrieve the color from the texture
-            uint8_t color = texture[0][texIndex];
+//             // Retrieve the color from the texture
+//             uint8_t color = texture[0][texIndex];
 
-            // Write the color to the screen buffer
-            RIA.rw0 = color;
-        }
-    }
-}
+//             // Write the color to the screen buffer
+//             RIA.rw0 = color;
+//         }
+//     }
+// }
 
 
 
@@ -829,10 +827,9 @@ int16_t main() {
     printf("Precalculating values...\n");
     precalculateRotations();
     precalculateLineHeights();
-    
-    
 
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
+    // erase_canvas();
 
     draw_ui();
 
@@ -928,7 +925,7 @@ int16_t main() {
                 }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;
-                    drawTexture();
+                    // drawTexture();
                     draw_ui();
                 }
                 if (key(KEY_MINUS)) {
