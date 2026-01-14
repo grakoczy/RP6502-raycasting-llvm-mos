@@ -27,6 +27,8 @@
 // For accessing the font library
 #define pgm_read_byte(addr) (*(const unsigned char *)(addr))
 
+void set_canvas_palette(uint16_t palette_xram_address);
+
 void init_bitmap_graphics(uint16_t canvas_struct_address,
                           uint16_t canvas_data_address,
                           uint8_t  canvas_plane,

@@ -1,75 +1,59 @@
 from PIL import Image
 import numpy as np
 import os
-import struct
+import re
 
-# Define your predefined list of image files
+# Your predefined list of image files
 image_files = [
-    "greystone32x32.png",        # Texture 0
-    "greystone32x32dark.png",    # Texture 1
-    "redbrick32x32.png",         # Texture 2
-    "redbrick32x32dark.png",     # Texture 3
-    # "bluestone32x32.png",      # Texture 4
-    # "bluestone32x32dark.png",  # Texture 5
-    # "colorstone32x32.png",     # Texture 6
-    # "colorstone32x32dark.png"  # Texture 7
+    "greystone32x32.png",
+    "greystone32x32dark.png",
+    "redbrick32x32.png",
+    "redbrick32x32dark.png"
 ]
 
-# Generate the 256-color ANSI palette
-def generate_ansi_palette():
+def load_palette_from_h(filename="palette.h"):
+    """Parses the RGB555 values from palette.h and converts them back to RGB888."""
     palette = []
-    # Standard ANSI Colors (0-15)
-    palette.extend([
-        (0, 0, 0),       (128, 0, 0),       (0, 128, 0),       (128, 128, 0),
-        (0, 0, 128),     (128, 0, 128),     (0, 128, 128),     (192, 192, 192),
-        (128, 128, 128), (255, 0, 0),       (0, 255, 0),       (255, 255, 0),
-        (0, 0, 255),     (255, 0, 255),     (0, 255, 255),     (255, 255, 255),
-    ])
-    
-    # Extended 6x6x6 color cube (16-231)
-    for r in [0, 95, 135, 175, 215, 255]:
-        for g in [0, 95, 135, 175, 215, 255]:
-            for b in [0, 95, 135, 175, 215, 255]:
+    try:
+        with open(filename, "r") as f:
+            content = f.read()
+            # Find all hex values like 0x1234
+            matches = re.findall(r'0x([0-9A-Fa-f]{4})', content)
+            for m in matches:
+                val = int(m, 16)
+                # Convert RGB555 back to RGB888 for PIL comparison
+                # b = (val >> 11) & 0x1F, g = (val >> 6) & 0x1F, r = val & 0x1F
+                r = (val & 0x1F) << 3
+                g = ((val >> 6) & 0x1F) << 3
+                b = ((val >> 11) & 0x1F) << 3
                 palette.append((r, g, b))
-    
-    # Grayscale Colors (232-255)
-    for gray in range(24):
-        level = 8 + gray * 10
-        palette.append((level, level, level))
-    
+    except FileNotFoundError:
+        print(f"Error: {filename} not found. Run the palette generator first!")
+        exit(1)
     return palette
 
-ansi_palette = generate_ansi_palette()
+# Load the hardware palette
+HW_PALETTE = load_palette_from_h("palette.h")
 
-def closest_ansi_color(r, g, b):
-    """Find the closest ANSI color index to the given RGB value."""
-    min_distance = float('inf')
-    closest_index = 0
-    for i, (cr, cg, cb) in enumerate(ansi_palette):
-        r, g, b = int(r), int(g), int(b)
-        cr, cg, cb = int(cr), int(cg), int(cb)
-        distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
-        if distance < min_distance:
-            min_distance = distance
-            closest_index = i
-    return closest_index
+def closest_texture_color(r, g, b):
+    """
+    Finds the closest color in the 'Image Zone' of the palette.
+    Skips the first 48 indices (Sky/Floor).
+    """
+    texture_slice = np.array(HW_PALETTE[48:])
+    distances = np.sqrt(np.sum((texture_slice - [r, g, b])**2, axis=1))
+    return np.argmin(distances) + 48
 
-def generate_texture_from_image(image_path, texture_size):
-    # Load the image and resize it to match the texture size
-    image = Image.open(image_path).convert('RGB').resize(texture_size)
-    width, height = image.size
-    pixels = np.array(image)
-
-    # Create the texture array
-    texture = []
-
-    for y in range(height):
-        for x in range(width):
-            r, g, b = pixels[y, x]
-            color_index = closest_ansi_color(r, g, b)
-            texture.append(color_index)
-
-    return texture
+def generate_texture_from_image(image_path, size):
+    with Image.open(image_path) as im:
+        rgb_im = im.convert("RGB")
+        im2 = rgb_im.resize(size)
+        texture_data = []
+        for y in range(size[1]):
+            for x in range(size[0]):
+                r, g, b = im2.getpixel((x, y))
+                texture_data.append(closest_texture_color(r, g, b))
+        return texture_data
 
 def save_textures_to_binary(file_name, textures, texture_size):
     """Save textures as a binary file."""

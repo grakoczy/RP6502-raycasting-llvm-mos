@@ -55,6 +55,11 @@ static uint8_t bbp_to_bpp_mode(uint8_t bpp)
     return 2; // default
 }
 
+void set_canvas_palette(uint16_t palette_xram_address) {
+    // This macro now has access to the static canvas_struct variable
+    xram0_struct_set(canvas_struct, vga_mode3_config_t, xram_palette_ptr, palette_xram_address);
+}
+
 void init_bitmap_graphics(uint16_t canvas_struct_address,
                           uint16_t canvas_data_address,
                           uint8_t  canvas_plane,

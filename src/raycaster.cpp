@@ -11,6 +11,7 @@
 #include "textures.h"
 #include "FpF.hpp"
 #include "maze.h"
+#include "palette.h"
 
 __attribute__((section(".zp.bss"))) static uint8_t zp_x;
 __attribute__((section(".zp.bss"))) static uint8_t zp_y;
@@ -39,8 +40,8 @@ FpF16<7> planeX(0.66);
 FpF16<7> planeY(0.0); //the 2d raycaster version of camera plane
 FpF16<7> moveSpeed(0.2); //the constant value is in squares/second
 FpF16<7> playerScale(5);
-FpF16<7> sin_r(0.2588190451); // precomputed value of sin(pi 1/16 rad)
-FpF16<7> cos_r(0.96592582628); 
+FpF16<7> sin_r(0.19509032201); // precomputed value of sin(pi 1/16 rad)
+FpF16<7> cos_r(0.9807852804); 
 
 uint16_t startX = 151+(26-mapWidth)/2;
 uint16_t startY = 137+(26-mapHeight)/2;
@@ -67,6 +68,7 @@ bool bigMode = true;
 
 uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
+uint8_t ceilingColors[WINDOW_HEIGTH];
 
 
 bool gamestate_changed = true;
@@ -116,6 +118,22 @@ uint8_t keystates[KEYBOARD_BYTES] = {0};
 // 1 << (code&7) moves a 1 into proper position to mask with byte contents
 // final & gives 1 if key is pressed, 0 if not
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
+
+#define PALETTE_XRAM_ADDR 0xF100 
+
+void load_custom_palette() {
+    // 1. Write the palette data into XRAM
+    RIA.addr0 = PALETTE_XRAM_ADDR;
+    RIA.step0 = 1;
+    for (int i = 0; i < 256; i++) {
+        uint16_t color = custom_palette[i];
+        RIA.rw0 = (uint8_t)(color & 0xFF); 
+        RIA.rw0 = (uint8_t)(color >> 8);   
+    }
+
+    // 2. Use the new helper function to update the hardware pointer
+    set_canvas_palette(PALETTE_XRAM_ADDR);
+}
 
 
 float f_abs(float value) {
@@ -645,6 +663,7 @@ int raycastF() {
     
     // Pre-cache floor colors pointer
     const uint8_t* floorColorPtr = floorColors;
+    const uint8_t* ceilingColorPtr = ceilingColors;
     
     for (zp_x = 0; zp_x < w; zp_x += currentStep)
     {
@@ -733,11 +752,13 @@ int raycastF() {
 
         uint8_t* bufPtr = &buffer[zp_x];
         uint8_t color;
+        // static uint8_t ceiling_color = 26;
         
         if (stepSize == 1) {
-            color = 235;
+            // color = ceiling_color;
             for (zp_y = 0; zp_y < drawStart; ++zp_y) {
-                *bufPtr = color;
+                // *bufPtr = color;
+                *bufPtr = ceilingColorPtr[zp_y];
                 bufPtr += w;
             }
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
@@ -752,10 +773,13 @@ int raycastF() {
             }
         } 
         else if (stepSize == 2) {
-            color = 235;
+            // color = ceiling_color;
             for (zp_y = 0; zp_y < drawStart; ++zp_y) {
-                bufPtr[0] = color;
-                bufPtr[1] = color;
+                uint8_t c = ceilingColorPtr[zp_y]; 
+                bufPtr[0] = c;
+                bufPtr[1] = c;
+                // bufPtr[0] = color;
+                // bufPtr[1] = color;
                 bufPtr += w;
             }
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
@@ -982,8 +1006,20 @@ int16_t main() {
     uint8_t i = 0;
     uint8_t timer = 0;
 
-    for(i = 0; i < h; i++){
-      floorColors[i] = mapValue(i, 0, h, 232, 250);
+    for(int i = 0; i < h / 2; i++) {
+        // CEILING: Top of screen (i=0) to horizon (i=h/2)
+        // Map i from 0..90 to palette indices 0..15 (Dark Blue to Light Blue)
+        uint8_t sky_idx = mapValue(i, 0, h / 2, 0, 15);
+        ceilingColors[i] = (sky_idx > 15) ? 15 : sky_idx;
+
+        // FLOOR: Horizon (i=h/2) to bottom of screen (i=h)
+        // We calculate the floor for the bottom half by mirroring the index
+        // Top of floor (horizon) = index 47 (Light Gray)
+        // Bottom of floor (feet) = index 16 (Black)
+        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 47); 
+    
+        // Fill the bottom half of the floor array
+        floorColors[i + (h / 2)] = (floor_idx > 47) ? 47 : floor_idx;
     }
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));//(qFP16_FPToInt(posX) * TILE_SIZE);
@@ -1022,6 +1058,18 @@ int16_t main() {
     precalculateLineHeights();
 
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
+    // 2. Upload the 256-color palette to XRAM
+    RIA.addr0 = PALETTE_XRAM_ADDR;
+    RIA.step0 = 1;
+    for (int i = 0; i < 256; i++) {
+        uint16_t color = custom_palette[i];
+        RIA.rw0 = (uint8_t)(color & 0xFF); 
+        RIA.rw0 = (uint8_t)(color >> 8);   
+    }
+
+    // 3. Tell VGA to use our new palette instead of default ANSI
+    xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, PALETTE_XRAM_ADDR);
+
     // erase_canvas();
 
     draw_ui();
