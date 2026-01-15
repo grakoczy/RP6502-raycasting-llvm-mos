@@ -40,9 +40,9 @@ def closest_texture_color(r, g, b):
     Finds the closest color in the 'Image Zone' of the palette.
     Skips the first 48 indices (Sky/Floor).
     """
-    texture_slice = np.array(HW_PALETTE[48:])
+    texture_slice = np.array(HW_PALETTE[64:])
     distances = np.sqrt(np.sum((texture_slice - [r, g, b])**2, axis=1))
-    return np.argmin(distances) + 48
+    return np.argmin(distances) + 64
 
 def generate_texture_from_image(image_path, size):
     with Image.open(image_path) as im:

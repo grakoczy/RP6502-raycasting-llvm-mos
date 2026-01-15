@@ -371,6 +371,40 @@ void drawBufferScanline_Mixed() {
     draw_odd = !draw_odd;
 }
 
+void drawBuffer1to1() {
+    // Draw each buffer line to exactly one screen line
+    // Since buffer is now 108 lines, this matches the screen height exactly
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    uint8_t* buffer_ptr = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        RIA.addr0 = screen_addr;
+        RIA.step0 = 1;
+
+        uint8_t* p = buffer_ptr;
+        for (uint8_t i = 0; i < w; i += 8) {
+            uint8_t c0 = *p++; uint8_t c1 = *p++; 
+            uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; 
+            uint8_t c6 = *p++; uint8_t c7 = *p++;
+
+            // Only horizontal doubling (2x width)
+            RIA.rw0 = c0; RIA.rw0 = c0;
+            RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2;
+            RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4;
+            RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6;
+            RIA.rw0 = c7; RIA.rw0 = c7;
+        }
+
+        // Move to next screen line (no skipping)
+        screen_addr += SCREEN_WIDTH;
+        buffer_ptr += WINDOW_WIDTH;
+    }
+}
+
 void drawBufferDouble_v3() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     uint8_t* buffer_ptr = buffer;
@@ -831,7 +865,7 @@ void draw_ui() {
   // set_cursor(5, 110);
   // sprintf(*buf," step: %i ", movementStep);
   // draw_string(*buf);
-  fill_rect_fast(2, 150, 136, 28, 28);
+  fill_rect_fast(DARK_GREEN, 150, 136, 28, 28);
 }
 
 // Function to draw the world map using the draw_rect function
@@ -851,17 +885,17 @@ void draw_map() {
           uint8_t color;
           switch(worldMap[i][j])
           {
-            case 1: color = 236; break; //grey
-            case 2: color = 40; break; //red
+            case 1: color = 40; break; //grey
+            case 2: color = RED; break; //red
             case 3: color = BLUE; break; //blue
-            case 4: color = 7; break; //white
-            case 5: color = 11; break; //yellow
+            case 4: color = WHITE; break; //white
+            case 5: color = YELLOW; break; //yellow
           }
           
           // Draw a wall tile (represented by a white rectangle)
           draw_rect(color, i * TILE_SIZE + startX, j * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
           } else {
-            draw_rect(2, i * TILE_SIZE + startX, j * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
+            draw_rect(DARK_GREEN, i * TILE_SIZE + startX, j * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
           }
       }
     }
@@ -888,10 +922,10 @@ void draw_needle() {
     int8_t prevArrowY1 = (int)(prevDirX * arrowWidth);
 
     // Clear the previous compass needle
-    draw_line(245, x + prevArrowX1 , y + prevArrowY1, x + plX, y + plY);  // left wing
-    draw_line(245, x - prevArrowX1 , y - prevArrowY1, x + plX, y + plY);  // right wing
-    draw_line(245, x + prevArrowX1 , y + prevArrowY1, x - plX, y - plY);  // left wing
-    draw_line(245, x - prevArrowX1 , y - prevArrowY1, x - plX, y - plY);  // right wing
+    draw_line(93, x + prevArrowX1 , y + prevArrowY1, x + plX, y + plY);  // left wing
+    draw_line(93, x - prevArrowX1 , y - prevArrowY1, x + plX, y + plY);  // right wing
+    draw_line(93, x + prevArrowX1 , y + prevArrowY1, x - plX, y - plY);  // left wing
+    draw_line(93, x - prevArrowX1 , y - prevArrowY1, x - plX, y - plY);  // right wing
 
     // Draw the new compass needle
     // draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);  // main line
@@ -899,7 +933,7 @@ void draw_needle() {
     draw_line(9, x - arrowX1 , y - arrowY1, x + lX, y + lY);  // right wing
     draw_line(4, x + arrowX1 , y + arrowY1, x - lX, y - lY);  // left wing
     draw_line(4, x - arrowX1 , y - arrowY1, x - lX, y - lY);  // right wing
-    draw_pixel(250, x, y);  // Draw central pixel
+    draw_pixel(YELLOW, x, y);  // Draw central pixel
 
     // Update previous position and direction
     // prevPlayerX = x;
@@ -918,9 +952,9 @@ void draw_player(){
     uint16_t y = (int)(posY * ts) + startY;
     
     // draw_line (243, prevPlayerX, prevPlayerY, prevPlayerX + plX, prevPlayerY + plY); // clear previous line
-    draw_pixel(2, prevPlayerX, prevPlayerY);
+    draw_pixel(DARK_GREEN, prevPlayerX, prevPlayerY);
     // draw_line(COLOR_FROM_RGB8(92, 255, 190), x, y, x + lX, y + lY);
-    draw_pixel(230, x, y);
+    draw_pixel(YELLOW, x, y);
     prevPlayerX = x;
     prevPlayerY = y;
     // prevDirX = dirX;
@@ -956,20 +990,30 @@ int16_t main() {
     uint8_t timer = 0;
 
     for(int i = 0; i < h / 2; i++) {
-        // CEILING: Top of screen (i=0) to horizon (i=h/2)
-        // Map i from 0..90 to palette indices 0..15 (Dark Blue to Light Blue)
-        uint8_t sky_idx = mapValue(i, 0, h / 2, 0, 15);
-        ceilingColors[i] = (sky_idx > 15) ? 15 : sky_idx;
+        // CEILING: Now maps to indices 16 to 31
+        uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
+        ceilingColors[i] = sky_idx;
 
-        // FLOOR: Horizon (i=h/2) to bottom of screen (i=h)
-        // We calculate the floor for the bottom half by mirroring the index
-        // Top of floor (horizon) = index 47 (Light Gray)
-        // Bottom of floor (feet) = index 16 (Black)
-        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 47); 
-    
-        // Fill the bottom half of the floor array
-        floorColors[i + (h / 2)] = (floor_idx > 47) ? 47 : floor_idx;
+        // FLOOR: Now maps to indices 63 to 32 (Light to Dark)
+        uint8_t floor_idx = mapValue(i, 0, h / 2, 32, 63); 
+        floorColors[i + (h / 2)] = floor_idx;
     }
+
+    // for(int i = 0; i < h / 2; i++) {
+    //     // CEILING: Top of screen (i=0) to horizon (i=h/2)
+    //     // Map i from 0..90 to palette indices 0..15 (Dark Blue to Light Blue)
+    //     uint8_t sky_idx = mapValue(i, 0, h / 2, 0, 15);
+    //     ceilingColors[i] = (sky_idx > 15) ? 15 : sky_idx;
+
+    //     // FLOOR: Horizon (i=h/2) to bottom of screen (i=h)
+    //     // We calculate the floor for the bottom half by mirroring the index
+    //     // Top of floor (horizon) = index 47 (Light Gray)
+    //     // Bottom of floor (feet) = index 16 (Black)
+    //     uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 47); 
+    
+    //     // Fill the bottom half of the floor array
+    //     floorColors[i + (h / 2)] = (floor_idx > 47) ? 47 : floor_idx;
+    // }
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));//(qFP16_FPToInt(posX) * TILE_SIZE);
     prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));//(qFP16_FPToInt(posY) * TILE_SIZE);
