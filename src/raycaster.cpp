@@ -460,57 +460,6 @@ void drawBufferRegular() {
     }
 }
 
-// Define the exact sizes to avoid confusion
-#define RAY_DATA_SIZE 768    // 96 width * 2 bytes * 4 tables
-#define VECTOR_DATA_SIZE 8   // 4 values * 2 bytes
-#define TOTAL_STEP_SIZE (RAY_DATA_SIZE + VECTOR_DATA_SIZE) // 776 bytes
-
-// void loadRotationStep(uint8_t step) {
-//     uint32_t stepBaseAddr = TABLES_BASE + ((uint32_t)step * TOTAL_STEP_SIZE);
-    
-//     // DEBUG: Print the calculated address
-//     printf("Loading step %d from address 0x%lX (decimal: %lu)\n", 
-//            step, stepBaseAddr, stepBaseAddr);
-
-//     // Fetch ray data - reading in little-endian format
-//     auto fetchChunk = [&](uint32_t addr, int16_t* dest) {
-//         RIA.addr0 = addr;
-//         RIA.step0 = 1;
-//         for(int i = 0; i < WINDOW_WIDTH; i++) {
-//             uint8_t low = RIA.rw0;
-//             uint8_t high = RIA.rw0;
-//             dest[i] = (int16_t)(low | (high << 8));
-//         }
-//     };
-
-//     fetchChunk(stepBaseAddr, activeRayDirX);
-//     fetchChunk(stepBaseAddr + ROW_SIZE_BYTES, activeRayDirY);
-//     fetchChunk(stepBaseAddr + (ROW_SIZE_BYTES*2), activeDeltaDistX);
-//     fetchChunk(stepBaseAddr + (ROW_SIZE_BYTES*3), activeDeltaDistY);
-
-//     // Fetch player vectors
-//     uint32_t vectorAddr = stepBaseAddr + RAY_DATA_SIZE;
-//     printf("  Vector address: 0x%lX (offset from base: %d)\n", 
-//            vectorAddr, RAY_DATA_SIZE);
-    
-//     RIA.addr0 = vectorAddr; 
-//     RIA.step0 = 1;
-
-//     int16_t raw_vals[4];
-//     for (int i = 0; i < 4; i++) {
-//         uint8_t low = RIA.rw0;
-//         uint8_t high = RIA.rw0;
-//         raw_vals[i] = (int16_t)(low | (high << 8));
-//     }
-    
-//     printf("  Raw values: dirX=%d dirY=%d planeX=%d planeY=%d\n",
-//            raw_vals[0], raw_vals[1], raw_vals[2], raw_vals[3]);
-    
-//     dirX = FpF16<7>::FromRaw(raw_vals[0]);
-//     dirY = FpF16<7>::FromRaw(raw_vals[1]);
-//     planeX = FpF16<7>::FromRaw(raw_vals[2]);
-//     planeY = FpF16<7>::FromRaw(raw_vals[3]);
-// }
 
 
 void precalculateRotations() {
