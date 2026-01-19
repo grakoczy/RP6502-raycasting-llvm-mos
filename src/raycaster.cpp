@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
+extern "C" {
+    #include <unistd.h>
+    #include <fcntl.h>
+}
 #include <time.h>
 #include "colors.h"
 #include "usb_hid_keys.h"
@@ -12,6 +16,14 @@
 #include "FpF.hpp"
 #include "maze.h"
 #include "palette.h"
+
+// Declare C functions for C++ linkage
+extern "C" {
+    int open(const char* filename, int flags, ...);
+    int close(int fd);
+    long lseek(int fd, long offset, int whence);
+    int read_xram(unsigned address, unsigned count, int fd);
+}
 
 __attribute__((section(".zp.bss"))) static uint8_t zp_x;
 __attribute__((section(".zp.bss"))) static uint8_t zp_y;
@@ -969,6 +981,7 @@ void handleCalculation() {
     draw_player();
     raycastF();
     gamestate = GAMESTATE_IDLE;
+    
 
 }
 
@@ -988,6 +1001,7 @@ int16_t main() {
     uint8_t mode = 0;
     uint8_t i = 0;
     uint8_t timer = 0;
+
 
     for(int i = 0; i < h / 2; i++) {
         // CEILING: Now maps to indices 16 to 31
@@ -1050,6 +1064,32 @@ int16_t main() {
     precalculateRotations();
     precalculateLineHeights();
 
+    // Load pixel-320x180.bin from filesystem to buffer at startup
+    printf("Loading background image...\n");
+    int fd = open("pixel-320x180.bin", O_RDONLY);
+    if(fd >= 0) {
+        uint32_t filesize = lseek(fd, 0, SEEK_END);
+        lseek(fd, 0, SEEK_SET);
+        printf("File size: %lu bytes\n", filesize);
+
+        uint32_t bytes_loaded = 0;
+        uint16_t current_xram_addr = 0x0000;
+        
+        // Load in 16KB chunks to avoid 32KB signed integer limits
+        while (bytes_loaded < filesize) {
+            uint32_t remaining = filesize - bytes_loaded;
+            uint16_t chunk_size = (remaining > 16384) ? 16384 : (uint16_t)remaining;
+            
+            read_xram(current_xram_addr, chunk_size, fd);
+            
+            bytes_loaded += chunk_size;
+            current_xram_addr += chunk_size;
+        }
+
+        close(fd);
+        printf("Background loaded successfully\n");
+    }
+
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
     // 2. Upload the 256-color palette to XRAM
     RIA.addr0 = PALETTE_XRAM_ADDR;
@@ -1064,6 +1104,7 @@ int16_t main() {
     xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, PALETTE_XRAM_ADDR);
 
     // erase_canvas();
+
 
     draw_ui();
 

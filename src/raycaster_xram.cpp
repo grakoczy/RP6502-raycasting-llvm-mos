@@ -20,28 +20,34 @@ extern "C" {
 #include "palette.h"
 
 // ============================================================================
-// XRAM Memory Map (now that 0x10000-0x1E0FF is free from pixel-320x180.bin)
+// XRAM Memory Map (64KB limit: 0x0000-0xFFFF)
 // ============================================================================
-#define XRAM_LINEHEIGHT_TABLE    0x10000  // 4KB (4096 bytes)
-#define XRAM_TEXOFFSET_TABLE     0x11000  // 128 bytes (64 entries * 2 bytes)
-#define XRAM_TEXSTEP_VALUES      0x11100  // ~220 bytes ((WINDOW_HEIGHT+1) * 2)
-#define XRAM_ROTATION_DATA_START 0x11200  // Start of rotation data arrays
+// Canvas buffer: 0x0000-0x95FF (38,400 bytes for 320x180x1bpp)
+// Available:     0x9600-0x1E0FF (20KB for precalc data)
+// Textures:      0x1E100+ (loaded by build system)
 
-// Each rotation step needs storage for all columns
-// Per rotation: 4 arrays * WINDOW_WIDTH * sizeof(FpF16<7>)
-// = 4 * 96 * 2 = 768 bytes per rotation
-// 32 rotations * 768 = 24,576 bytes total
+// Strategy: Store only essential lookup tables in XRAM
+// Rotation data is calculated on-the-fly when rotation changes
+#define XRAM_LINEHEIGHT_TABLE    0x9600   // 4KB (4096 bytes) - 0x9600 to 0xA5FF
+#define XRAM_TEXOFFSET_TABLE     0xA600   // 128 bytes - 0xA600 to 0xA67F
+#define XRAM_TEXSTEP_VALUES      0xA680   // 220 bytes - 0xA680 to 0xA75B
+
+// Total XRAM used: ~4.4KB
+// This leaves textures at 0x1E100 undisturbed
+
 #define BYTES_PER_ROTATION       768
-#define XRAM_RAYDIRX_OFFSET      0
-#define XRAM_RAYDIRY_OFFSET      (WINDOW_WIDTH * 2)
-#define XRAM_DELTADX_OFFSET      (WINDOW_WIDTH * 4)
-#define XRAM_DELTADY_OFFSET      (WINDOW_WIDTH * 6)
+#define BYTES_PER_DIRPLANE       16
 
-// Calculate XRAM address for specific rotation step
-#define XRAM_ROTATION_ADDR(step) (XRAM_ROTATION_DATA_START + ((step) * BYTES_PER_ROTATION))
+// Remove these - we'll calculate on-the-fly
+// #define XRAM_RAYDIRX_OFFSET      0
+// #define XRAM_RAYDIRY_OFFSET      (WINDOW_WIDTH * 2)
+// #define XRAM_DELTADX_OFFSET      (WINDOW_WIDTH * 4)
+// #define XRAM_DELTADY_OFFSET      (WINDOW_WIDTH * 6)
+// #define XRAM_ROTATION_ADDR(step) (XRAM_ROTATION_DATA_START + ((step) * BYTES_PER_ROTATION))
+// #define XRAM_DIRPLANE_ADDR(step) (XRAM_DIRPLANE_VALUES + ((step) * BYTES_PER_DIRPLANE))
 
 // ============================================================================
-// Zero Page Variables (for fastest access in tight loops)
+// Zero Page Variables
 // ============================================================================
 __attribute__((section(".zp.bss"))) static uint8_t zp_x;
 __attribute__((section(".zp.bss"))) static uint8_t zp_y;
@@ -121,7 +127,7 @@ static const uint16_t texYOffsets[32] = {
 };
 
 // ============================================================================
-// RAM Buffers for Active Rotation (768 bytes total - only current rotation!)
+// RAM Buffers
 // ============================================================================
 FpF16<7> currentRayDirX[WINDOW_WIDTH];
 FpF16<7> currentRayDirY[WINDOW_WIDTH];
@@ -218,248 +224,63 @@ inline FpF16<7> getTexStep(uint8_t lineHeight) {
 }
 
 // ============================================================================
-// Load Rotation Data from XRAM to RAM
+// Load Rotation Data - Calculate on-the-fly when rotation changes
 // ============================================================================
 
 void loadRotationData(uint8_t rotStep) {
-    uint16_t rotation_base = XRAM_ROTATION_ADDR(rotStep);
+    // Calculate current direction and plane for this rotation step
+    FpF16<7> currentDirX = FpF16<7>(0);
+    FpF16<7> currentDirY = FpF16<7>(-1);
+    FpF16<7> currentPlaneX = FpF16<7>(0.66);
+    FpF16<7> currentPlaneY = FpF16<7>(0.0);
     
-    // Load rayDirX
-    RIA.addr0 = rotation_base + XRAM_RAYDIRX_OFFSET;
-    RIA.step0 = 1;
-    for (uint8_t i = 0; i < WINDOW_WIDTH; i++) {
-        int16_t val = RIA.rw0;
-        val |= (RIA.rw0 << 8);
-        currentRayDirX[i] = FpF16<7>::FromRaw(val);
+    // Rotate to the correct step
+    for (uint8_t i = 0; i < rotStep; i++) {
+        FpF16<7> oldDirX = currentDirX;
+        currentDirX = currentDirX * cos_r - currentDirY * sin_r;
+        currentDirY = oldDirX * sin_r + currentDirY * cos_r;
+
+        FpF16<7> oldPlaneX = currentPlaneX;
+        currentPlaneX = currentPlaneX * cos_r - currentPlaneY * sin_r;
+        currentPlaneY = oldPlaneX * sin_r + currentPlaneY * cos_r;
     }
     
-    // Load rayDirY
-    RIA.addr0 = rotation_base + XRAM_RAYDIRY_OFFSET;
-    RIA.step0 = 1;
-    for (uint8_t i = 0; i < WINDOW_WIDTH; i++) {
-        int16_t val = RIA.rw0;
-        val |= (RIA.rw0 << 8);
-        currentRayDirY[i] = FpF16<7>::FromRaw(val);
-    }
+    // Update global direction and plane
+    dirX = currentDirX;
+    dirY = currentDirY;
+    planeX = currentPlaneX;
+    planeY = currentPlaneY;
     
-    // Load deltaDistX
-    RIA.addr0 = rotation_base + XRAM_DELTADX_OFFSET;
-    RIA.step0 = 1;
-    for (uint8_t i = 0; i < WINDOW_WIDTH; i++) {
-        int16_t val = RIA.rw0;
-        val |= (RIA.rw0 << 8);
-        currentDeltaDistX[i] = FpF16<7>::FromRaw(val);
-    }
-    
-    // Load deltaDistY
-    RIA.addr0 = rotation_base + XRAM_DELTADY_OFFSET;
-    RIA.step0 = 1;
-    for (uint8_t i = 0; i < WINDOW_WIDTH; i++) {
-        int16_t val = RIA.rw0;
-        val |= (RIA.rw0 << 8);
-        currentDeltaDistY[i] = FpF16<7>::FromRaw(val);
+    // Calculate ray directions for all columns
+    FpF16<7> fw = FpF16<7>(w);
+    for (uint8_t x = 0; x < w; x++) {
+        FpF16<7> cameraX = FpF16<7>(2 * x) / fw - FpF16<7>(1);
+        FpF16<7> rayDirX = currentDirX + currentPlaneX * cameraX;
+        FpF16<7> rayDirY = currentDirY + currentPlaneY * cameraX;
+
+        FpF16<7> deltaDistX, deltaDistY;
+
+        if (rayDirX == 0 || (rayDirX.GetRawVal() == -261)) { 
+            deltaDistX = 127;
+        } else { 
+            deltaDistX = fp_abs(FpF16<7>(1) / rayDirX); 
+        }
+        if (rayDirY == 0 || (rayDirY.GetRawVal() == -261)) { 
+            deltaDistY = 127;
+        } else { 
+            deltaDistY = fp_abs(FpF16<7>(1) / rayDirY); 
+        }
+        
+        currentRayDirX[x] = rayDirX;
+        currentRayDirY[x] = rayDirY;
+        currentDeltaDistX[x] = deltaDistX;
+        currentDeltaDistY[x] = deltaDistY;
     }
 }
 
 // ============================================================================
 // Drawing Functions
 // ============================================================================
-
-void drawBufferScanline_2on1off() {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        uint16_t addr1 = screen_addr;
-        uint16_t addr2 = screen_addr + SCREEN_WIDTH;
-        
-        uint8_t* p = buffer_ptr;
-        
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            RIA.addr0 = addr1;
-            RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            addr1 += 16;
-
-            RIA.addr0 = addr2;
-            RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            addr2 += 16;
-        }
-
-        screen_addr += SCREEN_WIDTH * 3;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-}
-
-void drawBufferScanline_1on1off() {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-
-        uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-}
-
-void drawBufferScanline_Interlaced() {
-    static bool draw_odd = false;
-    
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    
-    if (draw_odd) {
-        screen_addr += SCREEN_WIDTH;
-    }
-
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-
-        uint8_t* p = buffer_ptr;
-        
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    draw_odd = !draw_odd;
-}
-
-void drawBufferScanline_Mixed() {
-    static bool draw_odd = false;
-    
-    const uint8_t h1 = h / 6;
-    const uint8_t h2 = (h * 5) / 6;
-    
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h1; ++j) {
-        for (uint8_t row = 0; row < 2; ++row) {
-            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
-            RIA.step0 = 1;
-            uint8_t* p = buffer_ptr;
-            for (uint8_t i = 0; i < w; i += 8) {
-                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            }
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    for (uint8_t j = h1; j < h2; ++j) {
-        RIA.addr0 = screen_addr + (draw_odd ? SCREEN_WIDTH : 0);
-        RIA.step0 = 1;
-        uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    for (uint8_t j = h2; j < h; ++j) {
-        for (uint8_t row = 0; row < 2; ++row) {
-            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
-            RIA.step0 = 1;
-            uint8_t* p = buffer_ptr;
-            for (uint8_t i = 0; i < w; i += 8) {
-                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            }
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    draw_odd = !draw_odd;
-}
-
-void drawBuffer1to1() {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-
-        uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; 
-            uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; 
-            uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-
-        screen_addr += SCREEN_WIDTH;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-}
 
 void drawBufferDouble_v3() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
@@ -472,37 +293,23 @@ void drawBufferDouble_v3() {
         uint8_t* p = buffer_ptr;
         
         for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++;
-            uint8_t c1 = *p++;
-            uint8_t c2 = *p++;
-            uint8_t c3 = *p++;
-            uint8_t c4 = *p++;
-            uint8_t c5 = *p++;
-            uint8_t c6 = *p++;
-            uint8_t c7 = *p++;
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
 
             RIA.addr0 = addr1;
             RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
             addr1 += 16;
 
             RIA.addr0 = addr2;
             RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
             addr2 += 16;
         }
 
@@ -511,152 +318,54 @@ void drawBufferDouble_v3() {
     }
 }
 
-void drawBufferRegular() {
+void drawBufferScanline_Interlaced() {
+    static bool draw_odd = false;
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    if (draw_odd) screen_addr += SCREEN_WIDTH;
     uint8_t* buffer_ptr = buffer;
-
-    const uint16_t screen_stride = SCREEN_WIDTH;
-    const uint8_t buffer_stride = WINDOW_WIDTH;
 
     for (uint8_t j = 0; j < h; ++j) {
         RIA.addr0 = screen_addr;
         RIA.step0 = 1;
-
         uint8_t* p = buffer_ptr;
         for (uint8_t i = 0; i < w; i += 8) {
-            RIA.rw0 = p[0];
-            RIA.rw0 = p[1];
-            RIA.rw0 = p[2];
-            RIA.rw0 = p[3];
-            RIA.rw0 = p[4];
-            RIA.rw0 = p[5];
-            RIA.rw0 = p[6];
-            RIA.rw0 = p[7];
-            p += 8;
+            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
+            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
+            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
+            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
+            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
+            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
         }
-
-        screen_addr += screen_stride;
-        buffer_ptr += buffer_stride;
+        screen_addr += SCREEN_WIDTH * 2;
+        buffer_ptr += WINDOW_WIDTH;
     }
+    draw_odd = !draw_odd;
 }
 
 // ============================================================================
-// Precalculation Functions - Write to XRAM
+// Precalculation Functions
 // ============================================================================
 
 void precalculateRotations() {
-    FpF16<7> currentDirX = dirX;
-    FpF16<7> currentDirY = dirY;
-    FpF16<7> currentPlaneX = planeX;
-    FpF16<7> currentPlaneY = planeY;
-
+    // Just initialize basic values - rotation data calculated on-demand
     invW = FpF16<7>(1) / FpF16<7>(w);
-    FpF16<7> fw = FpF16<7>(w);
     halfH = FpF16<7>(h >> 1);
     
-    printf("Precalculating rotations to XRAM...\n");
-    
-    for (uint8_t i = 0; i < ROTATION_STEPS; i++) {
-        printf(".");
-        
-        FpF16<7> oldDirX = currentDirX;
-        currentDirX = currentDirX * cos_r - currentDirY * sin_r;
-        currentDirY = oldDirX * sin_r + currentDirY * cos_r;
-
-        FpF16<7> oldPlaneX = currentPlaneX;
-        currentPlaneX = currentPlaneX * cos_r - currentPlaneY * sin_r;
-        currentPlaneY = oldPlaneX * sin_r + currentPlaneY * cos_r;
-
-        uint16_t rotation_base = XRAM_ROTATION_ADDR(i);
-        
-        // Temporary arrays for this rotation step
-        FpF16<7> tempRayDirX[WINDOW_WIDTH];
-        FpF16<7> tempRayDirY[WINDOW_WIDTH];
-        FpF16<7> tempDeltaDistX[WINDOW_WIDTH];
-        FpF16<7> tempDeltaDistY[WINDOW_WIDTH];
-        
-        // Calculate all values for this rotation
-        for(uint8_t x = 0; x < w; x += currentStep) {
-            FpF16<7> cameraX = FpF16<7>(2 * x) / fw - FpF16<7>(1);
-            FpF16<7> rayDirX = currentDirX + currentPlaneX * cameraX;
-            FpF16<7> rayDirY = currentDirY + currentPlaneY * cameraX;
-
-            FpF16<7> deltaDistX, deltaDistY;
-
-            if (rayDirX == 0 || (rayDirX.GetRawVal() == -261)) { 
-                deltaDistX = 127;
-            } else { 
-                deltaDistX = fp_abs(FpF16<7>(1) / rayDirX); 
-            }
-            if (rayDirY == 0 || (rayDirY.GetRawVal() == -261)) { 
-                deltaDistY = 127;
-            } else { 
-                deltaDistY = fp_abs(FpF16<7>(1) / rayDirY); 
-            }
-            
-            tempRayDirX[x] = rayDirX;
-            tempRayDirY[x] = rayDirY;
-            tempDeltaDistX[x] = deltaDistX;
-            tempDeltaDistY[x] = deltaDistY;
-        }
-        
-        // Write rayDirX to XRAM
-        RIA.addr0 = rotation_base + XRAM_RAYDIRX_OFFSET;
-        RIA.step0 = 1;
-        for(uint8_t x = 0; x < w; x++) {
-            int16_t val = tempRayDirX[x].GetRawVal();
-            RIA.rw0 = (uint8_t)(val & 0xFF);
-            RIA.rw0 = (uint8_t)(val >> 8);
-        }
-        
-        // Write rayDirY to XRAM
-        RIA.addr0 = rotation_base + XRAM_RAYDIRY_OFFSET;
-        RIA.step0 = 1;
-        for(uint8_t x = 0; x < w; x++) {
-            int16_t val = tempRayDirY[x].GetRawVal();
-            RIA.rw0 = (uint8_t)(val & 0xFF);
-            RIA.rw0 = (uint8_t)(val >> 8);
-        }
-        
-        // Write deltaDistX to XRAM
-        RIA.addr0 = rotation_base + XRAM_DELTADX_OFFSET;
-        RIA.step0 = 1;
-        for(uint8_t x = 0; x < w; x++) {
-            int16_t val = tempDeltaDistX[x].GetRawVal();
-            RIA.rw0 = (uint8_t)(val & 0xFF);
-            RIA.rw0 = (uint8_t)(val >> 8);
-        }
-        
-        // Write deltaDistY to XRAM
-        RIA.addr0 = rotation_base + XRAM_DELTADY_OFFSET;
-        RIA.step0 = 1;
-        for(uint8_t x = 0; x < w; x++) {
-            int16_t val = tempDeltaDistY[x].GetRawVal();
-            RIA.rw0 = (uint8_t)(val & 0xFF);
-            RIA.rw0 = (uint8_t)(val >> 8);
-        }
-    }
-
-    printf("\nDone writing rotations to XRAM\n");
+    printf("Rotation data will be calculated on-demand\n");
 }
 
 void precalculateLineHeights() {
     printf("Precalculating line heights to XRAM...\n");
     
-    // Write expanded lineheight table to XRAM (4096 entries)
     RIA.addr0 = XRAM_LINEHEIGHT_TABLE;
     RIA.step0 = 1;
-    RIA.rw0 = h; // Entry 0
+    RIA.rw0 = h;
     
     for (int i = 1; i < 4096; ++i) {
         FpF16<7> dist = FpF16<7>::FromRaw(i);
         FpF16<7> heightFp = FpF16<7>(h) / dist;
         int height = (int)heightFp;
-        
-        if (height > h || height < 0) {
-            height = h;
-        }
-        
+        if (height > h || height < 0) height = h;
         RIA.rw0 = (uint8_t)height;
     }
     
@@ -667,7 +376,6 @@ void precalculateLineHeights() {
     for (int i = 0; i < 64; i++) {
         int16_t offset = (i == 0) ? 0 : (2048 - (int16_t)(110592L / i));
         if (offset < 0) offset = 0;
-        
         RIA.rw0 = (uint8_t)(offset & 0xFF);
         RIA.rw0 = (uint8_t)(offset >> 8);
     }
@@ -676,7 +384,6 @@ void precalculateLineHeights() {
     RIA.addr0 = XRAM_TEXSTEP_VALUES;
     RIA.step0 = 1;
     
-    // Entry 0 (avoid division by zero)
     int16_t val = FpF16<7>(texHeight).GetRawVal();
     RIA.rw0 = (uint8_t)(val & 0xFF);
     RIA.rw0 = (uint8_t)(val >> 8);
@@ -692,18 +399,16 @@ void precalculateLineHeights() {
 }
 
 // ============================================================================
-// Raycasting Function - Optimized with XRAM lookups and RAM buffers
+// Raycasting Function
 // ============================================================================
 
 int raycastF() {
-    // Load current rotation from XRAM to RAM (only when rotation changes!)
     static uint8_t lastRotStep = 255;
     if (currentRotStep != lastRotStep) {
         loadRotationData(currentRotStep);
         lastRotStep = currentRotStep;
     }
     
-    // Use RAM pointers for fast access
     FpF16<7>* rayDirXPtr = currentRayDirX;
     FpF16<7>* rayDirYPtr = currentRayDirY;
     FpF16<7>* deltaDistXPtr = currentDeltaDistX;
@@ -769,7 +474,6 @@ int raycastF() {
             (sideDistXRaw - deltaDistXRaw) : 
             (sideDistYRaw - deltaDistYRaw);
         
-        // Use XRAM lookup for line height
         uint8_t lineHeight = getLineHeight(rawDist);
         
         uint8_t texNum = (worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side;
@@ -790,7 +494,6 @@ int raycastF() {
 
         fetchTextureColumn(texNum, texX);
         
-        // Use XRAM lookup for tex offset and step
         int16_t raw_texPos = getTexOffset(lineHeight);
         FpF16<7> texStep = getTexStep(lineHeight);
         int16_t raw_step = texStep.GetRawVal();
@@ -897,8 +600,6 @@ void draw_map() {
 
 void draw_needle() {
     FpF16<7> l(12);
-    FpF16<7> ts(TILE_SIZE);
-
     uint16_t x = 293;
     uint16_t y = 50;
 
@@ -930,7 +631,6 @@ void draw_needle() {
 
 void draw_player(){
     FpF16<7> ts(TILE_SIZE);
-
     uint16_t x = (int)(posX * ts) + startX;
     uint16_t y = (int)(posY * ts) + startY;
     
@@ -962,16 +662,12 @@ void WaitForAnyKey(){
 int16_t main() {
     bool handled_key = false;
     bool paused = false;
-    bool show_buffers_indicators = true;
-    uint8_t mode = 0;
-    uint8_t i = 0;
     uint8_t timer = 0;
 
     // Initialize floor and ceiling colors
     for(int i = 0; i < h / 2; i++) {
         uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
         ceilingColors[i] = sky_idx;
-
         uint8_t floor_idx = mapValue(i, 0, h / 2, 32, 63); 
         floorColors[i + (h / 2)] = floor_idx;
     }
@@ -985,12 +681,10 @@ int16_t main() {
 
     // Initialize maze
     initializeMaze();
-
     printf("Generating maze...\n");
     srand(4);
     int startPosX = (random(1, ((mapWidth - 2) / 2)) * 2 + 1);
     int startPoxY = (random(1, ((mapHeight - 2) / 2)) * 2 + 1);
-
     printf("startX: %i, startY: %i\n", startX, startY);
     
     iterativeDFS(startPosX, startPoxY);
@@ -1003,22 +697,7 @@ int16_t main() {
     precalculateRotations();
     precalculateLineHeights();
 
-    // Load background image from filesystem
-    printf("Loading background image...\n");
-    int fd = open("pixel-320x180.bin", O_RDONLY);
-    if(fd >= 0) {
-        uint32_t filesize = lseek(fd, 0, SEEK_END);
-        lseek(fd, 0, SEEK_SET);
-        
-        printf("File size: %lu bytes\n", filesize);
-        read_xram(0x0000, filesize, fd);
-        close(fd);
-        printf("Background loaded successfully\n");
-    } else {
-        printf("WARNING: pixel-320x180.bin not found (fd=%i)\n", fd);
-        printf("Canvas will be empty\n");
-    }
-
+    // Initialize graphics BEFORE loading background
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
     
     // Upload custom palette
@@ -1030,6 +709,23 @@ int16_t main() {
         RIA.rw0 = (uint8_t)(color >> 8);   
     }
     xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, PALETTE_XRAM_ADDR);
+
+    // Load background image from filesystem to canvas buffer
+    printf("Loading background image...\n");
+    int fd = open("pixel-320x180.bin", O_RDONLY);
+    if(fd >= 0) {
+        uint32_t filesize = lseek(fd, 0, SEEK_END);
+        lseek(fd, 0, SEEK_SET);
+        
+        printf("File size: %lu bytes\n", filesize);
+        // Load to canvas buffer at 0x0000
+        read_xram(0x0000, filesize, fd);
+        close(fd);
+        printf("Background loaded successfully\n");
+    } else {
+        printf("WARNING: pixel-320x180.bin not found (fd=%i)\n", fd);
+        printf("Starting with empty canvas\n");
+    }
 
     draw_ui();
     draw_map();
@@ -1048,15 +744,13 @@ int16_t main() {
             handleCalculation();
         }
 
-        xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
+        xregn(0, 0, 0, 1, KEYBOARD_INPUT);
         RIA.addr0 = KEYBOARD_INPUT;
         RIA.step0 = 0;
 
         for (uint8_t i = 0; i < KEYBOARD_BYTES; i++) {
-            uint8_t j, new_keys;
             RIA.addr0 = KEYBOARD_INPUT + i;
-            new_keys = RIA.rw0;
-            keystates[i] = new_keys;
+            keystates[i] = RIA.rw0;
         }
 
         if (!(keystates[0] & 1)) {
@@ -1066,16 +760,10 @@ int16_t main() {
             if (key(KEY_RIGHT)){
                 gamestate = GAMESTATE_MOVING;
                 currentRotStep = (currentRotStep + 1) % ROTATION_STEPS;
-                dirX = currentRayDirX[0];
-                if (currentRotStep == 0) dirX = 0;
-                dirY = currentRayDirY[0];
             }
             if (key(KEY_LEFT)){
                 gamestate = GAMESTATE_MOVING;
                 currentRotStep = (currentRotStep - 1 + ROTATION_STEPS) % ROTATION_STEPS;
-                dirX = currentRayDirX[0];
-                if (currentRotStep == 0) dirX = 0;
-                dirY = currentRayDirY[0];
             }
             if (key(KEY_UP)) {
                 gamestate = GAMESTATE_MOVING;
