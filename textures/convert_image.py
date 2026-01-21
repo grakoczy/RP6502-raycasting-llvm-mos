@@ -49,8 +49,45 @@ def conv_image(name_in, size_x, size_y, name_out):
                     o.write(int(color_index).to_bytes(1, 'little'))
     print("Done.")
 
+def rp6502_rgb_sprite_bpp16(r, g, b, a):
+    """Convert RGBA to RP6502 sprite format (RGB555 with transparency)"""
+    if a < 128:  # Transparent pixel
+        return 0
+    else:
+        # RGB555 format with bit 5 set (non-transparent marker)
+        return ((((b>>3)<<11)|((g>>3)<<6)|(r>>3))|1<<5)
+
+def conv_sprite_bpp16(name_in, size, name_out):
+    """Convert PNG to RP6502 BPP16 sprite format"""
+    print(f"Converting {name_in} to {name_out} ({size}x{size})...")
+    
+    with Image.open(name_in) as im:
+        with open(name_out, "wb") as o:
+            rgba_im = im.convert("RGBA")
+            im2 = rgba_im.resize(size=[size, size])
+            
+            transparent = 0
+            colored = 0
+            
+            for y in range(0, im2.height):
+                for x in range(0, im2.width):
+                    r, g, b, a = im2.getpixel((x, y))
+                    pixel_value = rp6502_rgb_sprite_bpp16(r, g, b, a)
+                    
+                    if pixel_value == 0:
+                        transparent += 1
+                    else:
+                        colored += 1
+                    
+                    o.write(pixel_value.to_bytes(2, byteorder="little", signed=False))
+            
+            print(f"Done. Transparent: {transparent}, Colored: {colored}")
+            print(f"File size: {size*size*2} bytes")
+
 # Example usage (you can add this to the bottom or call from another script)
 if __name__ == "__main__":
-    # Example: conv_image("input.png", 320, 180, "pixel-320x180.bin")
-    conv_image("steampunk_control_panel_ansi_palette_320x180.png", 320, 180, "pixel-320x180.bin")
-    pass
+    # For backgrounds (no transparency needed)
+    conv_image("steampunk_control_panel_320x180.png", 320, 180, "background-320x180.bin")
+    
+    # For sprites (WITH transparency support)
+    conv_sprite_bpp16("needle-32x32.png", 32, "needle-32x32.bin")

@@ -60,7 +60,7 @@ FpF16<7> cos_r(0.991444861);
 uint16_t startX = 151+(26-mapWidth)/2;
 uint16_t startY = 137+(26-mapHeight)/2;
 
-FpF16<7> prevDirX, prevDirY;                                                       
+// FpF16<7> prevDirX, prevDirY;                                                       
 uint16_t prevPlayerX, prevPlayerY;
 
 int8_t currentStep = 1;
@@ -121,16 +121,49 @@ FpF16<7> cameraXValues[WINDOW_WIDTH];
 int16_t texOffsetTable[64]; 
 uint8_t texColumnBuffer[32]; 
 
+static const int16_t sin_fix8_48[] = {
+      0,  33,  66,  98, 128, 156, 181, 203, 222, 237, 247, 252,  // 0-82.5°
+    256, 252, 247, 237, 222, 203, 181, 156, 128,  98,  66,  33,  // 90-172.5°
+      0, -33, -66, -98,-128,-156,-181,-203,-222,-237,-247,-252,  // 180-262.5°
+   -256,-252,-247,-237,-222,-203,-181,-156,-128, -98, -66, -33,  // 270-352.5°
+      0
+};
+
+static const int16_t cos_fix8_48[] = {
+    256, 252, 247, 237, 222, 203, 181, 156, 128,  98,  66,  33,  // 0-82.5°
+      0, -33, -66, -98,-128,-156,-181,-203,-222,-237,-247,-252,  // 90-172.5°
+   -256,-252,-247,-237,-222,-203,-181,-156,-128, -98, -66, -33,  // 180-262.5°
+      0,  33,  66,  98, 128, 156, 181, 203, 222, 237, 247, 252,  // 270-352.5°
+    256
+};
+
+// fix_8((1+(sin(theta_deg)-cos(theta_deg)))/2) for 48 steps
+static const int16_t t2_fix8_48[] = {
+      0,  19,  37,  56,  81, 103, 128, 150, 175, 196, 219, 237,  // 0-82.5°
+    256, 271, 285, 294, 303, 306, 309, 306, 303, 294, 285, 271,  // 90-172.5°
+    256, 237, 219, 196, 175, 150, 128, 103,  81,  56,  37,  19,  // 180-262.5°
+      0, -15, -29, -38, -47, -50, -53, -50, -47, -38, -29, -15,  // 270-352.5°
+      0
+};
+
 uint8_t currentRotStep = 0; 
 
 FpF16<7> invW;
 FpF16<7> halfH(h / 2);
 
+#define NEEDLE_SPRITE_ADDR 0xF100  // Sprite data (2048 bytes)
+#define PALETTE_XRAM_ADDR 0xF900   // After sprite (0xF100 + 2048 = 0xF900)
+#define NEEDLE_CONFIG_ADDR 0xFB00  // After palette (0xF900 + 512 = 0xFB00)
+#define NEEDLE_SIZE 32                  // 24x24 pixel sprite
+#define LOG_NEEDLE_SIZE 5               // 2^5 = 32 (round up to power of 2)
+
+#define NEEDLE_CENTER_X 294
+#define NEEDLE_CENTER_Y 50
+
 #define KEYBOARD_INPUT 0xFF10 
 #define KEYBOARD_BYTES 32
 uint8_t keystates[KEYBOARD_BYTES] = {0};
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
-#define PALETTE_XRAM_ADDR 0xF100 
 
 void load_custom_palette() {
     RIA.addr0 = PALETTE_XRAM_ADDR;
@@ -512,7 +545,7 @@ void draw_map() {
           uint8_t color;
           switch(worldMap[i][j])
           {
-            case 1: color = 40; break; 
+            case 1: color = 37; break; 
             case 2: color = RED; break; 
             case 3: color = BLUE; break; 
             case 4: color = WHITE; break; 
@@ -527,36 +560,21 @@ void draw_map() {
 } 
 
 void draw_needle() {
-    FpF16<7> l(12);
-    FpF16<7> ts(TILE_SIZE);
 
-    uint16_t x = 293;
-    uint16_t y = 50;
-
-    int8_t lX = (int)(dirX * l); 
-    int8_t lY = (int)(dirY * l);
-    int8_t plX = (int)(prevDirX * l);
-    int8_t plY = (int)(prevDirY * l);
-
-    FpF16<7> arrowWidth(2);
-    int8_t arrowX1 = (int)(-dirY * arrowWidth); 
-    int8_t arrowY1 = (int)(dirX * arrowWidth);
-    int8_t prevArrowX1 = (int)(-prevDirY * arrowWidth);
-    int8_t prevArrowY1 = (int)(prevDirX * arrowWidth);
-
-    draw_line(93, x + prevArrowX1 , y + prevArrowY1, x + plX, y + plY);
-    draw_line(93, x - prevArrowX1 , y - prevArrowY1, x + plX, y + plY);
-    draw_line(93, x + prevArrowX1 , y + prevArrowY1, x - plX, y - plY);
-    draw_line(93, x - prevArrowX1 , y - prevArrowY1, x - plX, y - plY);
-
-    draw_line(9, x + arrowX1 , y + arrowY1, x + lX, y + lY);
-    draw_line(9, x - arrowX1 , y - arrowY1, x + lX, y + lY);
-    draw_line(4, x + arrowX1 , y + arrowY1, x - lX, y - lY);
-    draw_line(4, x - arrowX1 , y - arrowY1, x - lX, y - lY);
-    draw_pixel(YELLOW, x, y);
-
-    prevDirX = dirX;
-    prevDirY = dirY;
+    // Map currentRotStep (0-47) to table index
+    // Your rotation goes clockwise, so we need to invert
+    uint8_t i = (48 - currentRotStep) % 48;
+    
+    uint16_t ptr = NEEDLE_CONFIG_ADDR;
+    
+    // Update only the transform matrix (rotation)
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_48[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_48[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_48[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_48[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_48[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_48[48-i]);
+    
 }
 
 
@@ -586,6 +604,107 @@ void WaitForAnyKey(){
     while (RIA.rw0 & 1);
 }
 
+void debug_sprite_data() {
+    printf("Checking needle sprite data at 0x%04X:\n", NEEDLE_SPRITE_ADDR);
+    RIA.addr0 = NEEDLE_SPRITE_ADDR;
+    RIA.step0 = 1;
+    
+    // Check first row (should have many 0s for transparency)
+    int transparent_count = 0;
+    int colored_count = 0;
+    
+    for (int i = 0; i < 32; i++) {
+        uint8_t pixel = RIA.rw0;
+        if (pixel == 0) transparent_count++;
+        else colored_count++;
+    }
+    
+    printf("First row: %d transparent, %d colored\n", transparent_count, colored_count);
+}
+
+void init_needle_sprite() {
+    uint16_t ptr = NEEDLE_CONFIG_ADDR;
+    
+    // Calculate positions with proper parentheses to avoid warnings
+    int16_t needle_x = (NEEDLE_CENTER_X - NEEDLE_SIZE/2);
+    int16_t needle_y = (NEEDLE_CENTER_Y - NEEDLE_SIZE/2);
+    
+    // Set initial rotation (0 degrees = pointing up)
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_48[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_48[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_48[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_48[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_48[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_48[48-0-1]);
+    
+    // Set position (centered) - use variables to avoid macro warnings
+    xram0_struct_set(ptr, vga_mode4_asprite_t, x_pos_px, needle_x);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, y_pos_px, needle_y);
+    
+    // Set sprite data pointer
+    xram0_struct_set(ptr, vga_mode4_asprite_t, xram_sprite_ptr, NEEDLE_SPRITE_ADDR);
+    
+    // CRITICAL: Set log_size correctly for 32x32 sprite
+    xram0_struct_set(ptr, vga_mode4_asprite_t, log_size, 5);  // 2^5 = 32
+    
+    // No opacity metadata
+    xram0_struct_set(ptr, vga_mode4_asprite_t, has_opacity_metadata, false);
+    
+    // Enable Mode 4 affine sprite plane
+    // plane=1, num_sprites=1, affine=1
+    xregn(1, 0, 1, 5, 4, 1, NEEDLE_CONFIG_ADDR, 1, 1);
+}
+
+void debug_needle_config() {
+    uint16_t ptr = NEEDLE_CONFIG_ADDR;
+    
+    printf("\n=== NEEDLE SPRITE DEBUG ===\n");
+    printf("Config Address: 0x%04X\n", ptr);
+    printf("Sprite Data Address: 0x%04X\n", NEEDLE_SPRITE_ADDR);
+    printf("Needle Size: %d (log_size: %d)\n", NEEDLE_SIZE, 5);
+    printf("Position: (%d, %d)\n", NEEDLE_CENTER_X - NEEDLE_SIZE/2, NEEDLE_CENTER_Y - NEEDLE_SIZE/2);
+    
+    // Read back the configuration
+    printf("\nReading back config:\n");
+    
+    // Transform matrix
+    RIA.addr0 = ptr;
+    RIA.step0 = 1;
+    printf("Transform[0]: %d\n", (int16_t)(RIA.rw0 | (RIA.rw0 << 8)));
+    
+    // Position
+    RIA.addr0 = ptr + 12;
+    int16_t x = RIA.rw0 | (RIA.rw0 << 8);
+    int16_t y = RIA.rw0 | (RIA.rw0 << 8);
+    printf("Position from config: (%d, %d)\n", x, y);
+    
+    // Sprite pointer
+    RIA.addr0 = ptr + 16;
+    uint16_t sprite_ptr = RIA.rw0 | (RIA.rw0 << 8);
+    printf("Sprite pointer: 0x%04X\n", sprite_ptr);
+    
+    // Log size
+    RIA.addr0 = ptr + 18;
+    uint8_t log_sz = RIA.rw0;
+    printf("Log size: %d (actual size: %d)\n", log_sz, 1 << log_sz);
+    
+    // Check sprite data
+    printf("\nSprite data sample (first 64 pixels):\n");
+    RIA.addr0 = NEEDLE_SPRITE_ADDR;
+    RIA.step0 = 1;
+    
+    int transparent = 0, colored = 0;
+    for (int i = 0; i < 64; i++) {
+        uint8_t pixel = RIA.rw0;
+        if (i % 32 == 0) printf("\nRow %d: ", i / 32);
+        printf("%02X ", pixel);
+        if (pixel == 0) transparent++;
+        else colored++;
+    }
+    printf("\n\nFirst 64 pixels: %d transparent, %d colored\n", transparent, colored);
+    printf("=========================\n\n");
+}
+
 int16_t main() {
     bool handled_key = false;
     bool paused = false;
@@ -603,8 +722,8 @@ int16_t main() {
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));
     prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));
-    prevDirX = dirX;
-    prevDirY = dirY;
+    // prevDirX = dirX;
+    // prevDirY = dirY;
 
     gamestate = GAMESTATE_INIT;
 
@@ -643,6 +762,9 @@ int16_t main() {
     draw_ui();
     draw_map();
     draw_player();
+    init_needle_sprite();
+    debug_sprite_data();
+    debug_needle_config();
 
     handleCalculation();
 
