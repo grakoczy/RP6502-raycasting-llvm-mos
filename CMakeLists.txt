@@ -8,14 +8,17 @@ project(MY-RP6502-PROJECT)
 add_executable(raycast)
 
 rp6502_asset(raycast 0x1E100 textures/textures.bin)
+rp6502_asset(raycast 0x10000 textures/pixel-320x180.bin)
+
 
 rp6502_executable(raycast
+    pixel-320x180.bin.rp6502
     textures.bin.rp6502
 )
 
 target_sources(raycast PRIVATE
     src/colors.c
     src/bitmap_graphics.cpp
-    # src/raycaster_xram.cpp
-    src/raycaster.cpp
+    src/raycaster_quadrant.cpp
+    # src/raycaster.cpp
 )

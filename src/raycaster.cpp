@@ -30,6 +30,7 @@ __attribute__((section(".zp.bss"))) static uint8_t zp_y;
 __attribute__((section(".zp.bss"))) static int zp_mapX;
 __attribute__((section(".zp.bss"))) static int zp_mapY;
 __attribute__((section(".zp.bss"))) static uint8_t zp_side;
+__attribute__((section(".zp.bss"))) static uint8_t* buffer_ptr;
 
 using namespace mn::MFixedPoint;
 
@@ -42,6 +43,7 @@ using namespace mn::MFixedPoint;
 #define SCALE 2
 #define MIN_SCALE 8
 #define ROTATION_STEPS 32
+#define QUADRANT_STEPS 12
 
 
 FpF16<7> posX(9);
@@ -196,77 +198,6 @@ inline int FP16ToIntPercent(FpF16<7> number) {
     return static_cast<int>((float)(number) * 100);
 }
 
-void drawBufferScanline_2on1off() {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        // Prepare addresses for two consecutive rows
-        uint16_t addr1 = screen_addr;
-        uint16_t addr2 = screen_addr + SCREEN_WIDTH;
-        
-        uint8_t* p = buffer_ptr;
-        
-        for (uint8_t i = 0; i < w; i += 8) {
-            // Pre-load 8 pixels from source buffer
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            // Write to Row 1 (Horizontal 2x scale)
-            RIA.addr0 = addr1;
-            RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            addr1 += 16;
-
-            // Write to Row 2 (Horizontal 2x scale)
-            RIA.addr0 = addr2;
-            RIA.step0 = 1;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            addr2 += 16;
-        }
-
-        // Advance screen address by 3 rows (2 drawn, 1 skipped)
-        screen_addr += SCREEN_WIDTH * 3;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-}
-
-void drawBufferScanline_1on1off() {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-
-        uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-
-            // Write only one row, but keep horizontal doubling
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-
-        // Jump 2 lines forward on the screen
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-}
-
 void drawBufferScanline_Interlaced() {
     // static variable persists between function calls
     static bool draw_odd = false; 
@@ -313,111 +244,45 @@ void drawBufferScanline_Interlaced() {
     draw_odd = !draw_odd;
 }
 
-void drawBufferScanline_Mixed() {
-    static bool draw_odd = false;
-    
-    // Define our segment boundaries based on WINDOW_HEIGTH (54)
-    const uint8_t h1 = h / 6;          // 1/6 of height (9 lines)
-    const uint8_t h2 = (h * 5) / 6;    // Start of the last 1/6 (45 lines)
-    
+void drawBufferDouble_Optimized() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
-
-    // --- SECTION 1: Top 1/6 (Regular Double Draw) ---
-    for (uint8_t j = 0; j < h1; ++j) {
-        // We write to two screen rows to maintain 2x vertical scale
-        for (uint8_t row = 0; row < 2; ++row) {
-            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
-            RIA.step0 = 1;
-            uint8_t* p = buffer_ptr;
-            for (uint8_t i = 0; i < w; i += 8) {
-                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            }
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    // --- SECTION 2: Middle 2/3 (Interlaced Draw) ---
-    for (uint8_t j = h1; j < h2; ++j) {
-        // Only write to the even OR odd screen row based on the frame phase
-        RIA.addr0 = screen_addr + (draw_odd ? SCREEN_WIDTH : 0);
-        RIA.step0 = 1;
-        uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-            RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    // --- SECTION 3: Bottom 1/6 (Regular Double Draw) ---
-    for (uint8_t j = h2; j < h; ++j) {
-        for (uint8_t row = 0; row < 2; ++row) {
-            RIA.addr0 = screen_addr + (row * SCREEN_WIDTH);
-            RIA.step0 = 1;
-            uint8_t* p = buffer_ptr;
-            for (uint8_t i = 0; i < w; i += 8) {
-                uint8_t c0 = *p++; uint8_t c1 = *p++; uint8_t c2 = *p++; uint8_t c3 = *p++;
-                uint8_t c4 = *p++; uint8_t c5 = *p++; uint8_t c6 = *p++; uint8_t c7 = *p++;
-                RIA.rw0 = c0; RIA.rw0 = c0; RIA.rw0 = c1; RIA.rw0 = c1;
-                RIA.rw0 = c2; RIA.rw0 = c2; RIA.rw0 = c3; RIA.rw0 = c3;
-                RIA.rw0 = c4; RIA.rw0 = c4; RIA.rw0 = c5; RIA.rw0 = c5;
-                RIA.rw0 = c6; RIA.rw0 = c6; RIA.rw0 = c7; RIA.rw0 = c7;
-            }
-        }
-        screen_addr += SCREEN_WIDTH * 2;
-        buffer_ptr += WINDOW_WIDTH;
-    }
-
-    draw_odd = !draw_odd;
-}
-
-void drawBuffer1to1() {
-    // Draw each buffer line to exactly one screen line
-    // Since buffer is now 108 lines, this matches the screen height exactly
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr = buffer;
+    buffer_ptr = buffer;
 
     for (uint8_t j = 0; j < h; ++j) {
+        // Setup Channel 0 for the first row of the double-scanline
         RIA.addr0 = screen_addr;
         RIA.step0 = 1;
 
+        // Setup Channel 1 for the second row of the double-scanline
+        RIA.addr1 = screen_addr + SCREEN_WIDTH;
+        RIA.step1 = 1;
+        
         uint8_t* p = buffer_ptr;
-        for (uint8_t i = 0; i < w; i += 8) {
-            uint8_t c0 = *p++; uint8_t c1 = *p++; 
-            uint8_t c2 = *p++; uint8_t c3 = *p++;
-            uint8_t c4 = *p++; uint8_t c5 = *p++; 
-            uint8_t c6 = *p++; uint8_t c7 = *p++;
+        
+        // Window width w is 96. Unrolling by 8 pixels = 12 iterations.
+        for (uint8_t i = 0; i < 12; ++i) {
+            // Using a macro for clarity; the compiler will inline these.
+            #define PUSH_PIXEL \
+                { \
+                    uint8_t c = *p++; \
+                    RIA.rw0 = c; RIA.rw0 = c; /* Horizontal scale row 1 */ \
+                    RIA.rw1 = c; RIA.rw1 = c; /* Horizontal scale row 2 */ \
+                }
 
-            // Only horizontal doubling (2x width)
-            RIA.rw0 = c0; RIA.rw0 = c0;
-            RIA.rw0 = c1; RIA.rw0 = c1;
-            RIA.rw0 = c2; RIA.rw0 = c2;
-            RIA.rw0 = c3; RIA.rw0 = c3;
-            RIA.rw0 = c4; RIA.rw0 = c4;
-            RIA.rw0 = c5; RIA.rw0 = c5;
-            RIA.rw0 = c6; RIA.rw0 = c6;
-            RIA.rw0 = c7; RIA.rw0 = c7;
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            
+            #undef PUSH_PIXEL
         }
 
-        // Move to next screen line (no skipping)
-        screen_addr += SCREEN_WIDTH;
-        buffer_ptr += WINDOW_WIDTH;
+        // Advance to the next pair of screen rows
+        screen_addr += (SCREEN_WIDTH * 2);
+        // Advance the RAM buffer pointer by one window width
+        buffer_ptr += 96; 
     }
 }
 
-void drawBufferDouble_v3() {
+void drawBufferDouble() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     uint8_t* buffer_ptr = buffer;
 
@@ -797,9 +662,9 @@ int raycastF() {
     // bigMode ? drawBufferDouble_v3() : drawBufferRegular();
     // bigMode ? drawBufferScanline_Interlaced() : drawBufferRegular();
     if (!bigMode) {
-        stepSize == 1 ? drawBufferDouble_v3() : drawBufferScanline_Interlaced();
+        stepSize == 1 ? drawBufferDouble() : drawBufferScanline_Interlaced();
     } else {
-        drawBufferDouble_v3();
+        drawBufferDouble_Optimized();
     }
     return 0;
 }
@@ -1064,31 +929,31 @@ int16_t main() {
     precalculateRotations();
     precalculateLineHeights();
 
-    // Load pixel-320x180.bin from filesystem to buffer at startup
-    printf("Loading background image...\n");
-    int fd = open("pixel-320x180.bin", O_RDONLY);
-    if(fd >= 0) {
-        uint32_t filesize = lseek(fd, 0, SEEK_END);
-        lseek(fd, 0, SEEK_SET);
-        printf("File size: %lu bytes\n", filesize);
+    // // Load pixel-320x180.bin from filesystem to buffer at startup
+    // printf("Loading background image...\n");
+    // int fd = open("pixel-320x180.bin", O_RDONLY);
+    // if(fd >= 0) {
+    //     uint32_t filesize = lseek(fd, 0, SEEK_END);
+    //     lseek(fd, 0, SEEK_SET);
+    //     printf("File size: %lu bytes\n", filesize);
 
-        uint32_t bytes_loaded = 0;
-        uint16_t current_xram_addr = 0x0000;
+    //     uint32_t bytes_loaded = 0;
+    //     uint16_t current_xram_addr = 0x0000;
         
-        // Load in 16KB chunks to avoid 32KB signed integer limits
-        while (bytes_loaded < filesize) {
-            uint32_t remaining = filesize - bytes_loaded;
-            uint16_t chunk_size = (remaining > 16384) ? 16384 : (uint16_t)remaining;
+    //     // Load in 16KB chunks to avoid 32KB signed integer limits
+    //     while (bytes_loaded < filesize) {
+    //         uint32_t remaining = filesize - bytes_loaded;
+    //         uint16_t chunk_size = (remaining > 16384) ? 16384 : (uint16_t)remaining;
             
-            read_xram(current_xram_addr, chunk_size, fd);
+    //         read_xram(current_xram_addr, chunk_size, fd);
             
-            bytes_loaded += chunk_size;
-            current_xram_addr += chunk_size;
-        }
+    //         bytes_loaded += chunk_size;
+    //         current_xram_addr += chunk_size;
+    //     }
 
-        close(fd);
-        printf("Background loaded successfully\n");
-    }
+    //     close(fd);
+    //     printf("Background loaded successfully\n");
+    // }
 
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
     // 2. Upload the 256-color palette to XRAM
