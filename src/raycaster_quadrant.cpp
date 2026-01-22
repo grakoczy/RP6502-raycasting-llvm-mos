@@ -39,7 +39,7 @@ using namespace mn::MFixedPoint;
 #define SCREEN_WIDTH 320 
 #define SCREEN_HEIGHT 180 
 #define WINDOW_WIDTH 96
-#define WINDOW_HEIGTH 54
+#define WINDOW_HEIGTH 64
 
 #define ROTATION_STEPS 48
 #define QUADRANT_STEPS 12 
@@ -66,7 +66,7 @@ int8_t currentStep = 1;
 int8_t movementStep = 2; 
 
 uint8_t xOffset = 68;
-uint8_t yOffset = 18; 
+uint8_t yOffset = 3; 
 
 uint16_t texSize = texWidth * texHeight -1;
 const uint8_t w = WINDOW_WIDTH;
@@ -214,8 +214,9 @@ void drawBufferDouble_Optimized() {
         RIA.addr1 = screen_addr + SCREEN_WIDTH;
         RIA.step1 = 1;
         uint8_t* p = buffer_ptr_loc;
-        // Unroll 8 pixels
-        for (uint8_t i = 0; i < 12; ++i) {
+        // Unroll 8 pixels per block (width must be multiple of 8)
+        const uint8_t blocks = w >> 3;
+        for (uint8_t i = 0; i < blocks; ++i) {
             #define PUSH_PIXEL \
                 { \
                     uint8_t c = *p++; \
@@ -227,7 +228,7 @@ void drawBufferDouble_Optimized() {
             #undef PUSH_PIXEL
         }
         screen_addr += (SCREEN_WIDTH * 2);
-        buffer_ptr_loc += 96; 
+        buffer_ptr_loc += w; 
     }
 }
 
