@@ -594,7 +594,9 @@ int raycastF() {
         if (rawDist >= 0 && rawDist < 1024) {
             lineHeight = lineHeightTable[rawDist];
         } else {
-            lineHeight = h;
+            lineHeight = (rawDist > 0) ?
+                (int)(FpF16<7>(h) / FpF16<7>::FromRaw(rawDist)) : h;
+            if (lineHeight > h) lineHeight = h;
         }
         
         uint8_t texNum = (worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side;
