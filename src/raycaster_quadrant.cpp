@@ -511,12 +511,13 @@ void updateRaycasterVectors() {
 // }
 
 void precalculateLineHeights() {
-    lineHeightTable[0] = h; 
+    lineHeightTable[0] = 255; 
     for (int i = 1; i < 1024; ++i) {
-        FpF16<7> dist = FpF16<7>::FromRaw(i);
-        FpF16<7> heightFp = FpF16<7>(h) / dist;
+        FpF32<7> dist = FpF32<7>::FromRaw(i);
+        FpF32<7> heightFp = FpF32<7>(h) / dist;
         int height = (int)heightFp;
-        if (height > h || height < 0) height = h;
+        if (height > 255) height = 255;
+        if (height < 0) height = 0;
         lineHeightTable[i] = (uint8_t)height;
     }
     texOffsetTable[0] = 0;
@@ -591,19 +592,19 @@ int raycastF() {
             (zp_sideDistX - zp_deltaX) : 
             (zp_sideDistY - zp_deltaY);
         
-        uint8_t lineHeight;
+        uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
             lineHeight = lineHeightTable[rawDist];
         } else {
             lineHeight = (rawDist > 0) ?
                 (int)(FpF16<7>(h) / FpF16<7>::FromRaw(rawDist)) : h;
-            if (lineHeight > h) lineHeight = h;
+            if (lineHeight > 255) lineHeight = 255;
         }
         
         uint8_t texNum = (worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side;
-        int8_t drawStart = (-lineHeight >> 1) + 27; 
+        int16_t drawStart = (-((int16_t)lineHeight) >> 1) + (h >> 1);
         if (drawStart < 0) drawStart = 0;
-        uint8_t drawEnd = drawStart + lineHeight;
+        uint16_t drawEnd = drawStart + lineHeight;
         if (drawEnd > h) drawEnd = h;
 
         // Wall X calculation using rDX and rDY
@@ -619,7 +620,9 @@ int raycastF() {
 
         fetchTextureColumn(texNum, texX);
         
-        int16_t raw_step = texStepValues[lineHeight].GetRawVal();
+        int16_t raw_step = (lineHeight <= h) ?
+            texStepValues[lineHeight].GetRawVal() :
+            (FpF16<7>(texHeight) / FpF16<7>((int16_t)lineHeight)).GetRawVal();
         int16_t raw_texPos = (lineHeight > h) ? 
             texOffsetTable[(lineHeight > 63) ? 63 : lineHeight] : 0;
         if (raw_texPos < 0) raw_texPos = 0;
@@ -636,7 +639,7 @@ int raycastF() {
             }
             f_ptr += drawEnd; 
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
-                uint8_t texY = (raw_texPos >> 7) & 63; 
+                uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 uint8_t color = texColumnBuffer[texY];
                 bufPtr[0] = color; bufPtr[1] = color;
                 raw_texPos += raw_step;
@@ -654,7 +657,7 @@ int raycastF() {
             }
             f_ptr += drawEnd;
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
-                uint8_t texY = (raw_texPos >> 7) & 63;
+                uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 *bufPtr = texColumnBuffer[texY];
                 raw_texPos += raw_step;
                 bufPtr += w;
