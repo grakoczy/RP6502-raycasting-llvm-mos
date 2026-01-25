@@ -232,6 +232,58 @@ void drawBufferDouble_Optimized() {
     }
 }
 
+void drawBufferDouble_Optimized_Interlaced(bool oddField) {
+    uint16_t screen_addr = SCREEN_WIDTH * (yOffset + (oddField ? 1 : 0)) + xOffset;
+    uint8_t* buffer_ptr_loc = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        RIA.addr0 = screen_addr;
+        RIA.step0 = 1;
+        uint8_t* p = buffer_ptr_loc;
+        // Unroll 8 pixels per block (width must be multiple of 8)
+        const uint8_t blocks = w >> 3;
+        for (uint8_t i = 0; i < blocks; ++i) {
+            #define PUSH_PIXEL \
+                { \
+                    uint8_t c = *p++; \
+                    RIA.rw0 = c; RIA.rw0 = c; \
+                }
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            #undef PUSH_PIXEL
+        }
+        screen_addr += (SCREEN_WIDTH << 1);
+        buffer_ptr_loc += w;
+    }
+}
+
+void fillBuffer(uint8_t color) {
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
+    uint8_t* buffer_ptr_loc = buffer;
+
+    for (uint8_t j = 0; j < h; ++j) {
+        RIA.addr0 = screen_addr;
+        RIA.step0 = 1;
+        RIA.addr1 = screen_addr + SCREEN_WIDTH;
+        RIA.step1 = 1;
+        uint8_t* p = buffer_ptr_loc;
+        // Unroll 8 pixels per block (width must be multiple of 8)
+        const uint8_t blocks = w >> 3;
+        for (uint8_t i = 0; i < blocks; ++i) {
+            #define PUSH_PIXEL \
+                { \
+                    uint8_t c = color; \
+                    RIA.rw0 = c; RIA.rw0 = c; \
+                    RIA.rw1 = c; RIA.rw1 = c; \
+                }
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+            #undef PUSH_PIXEL
+        }
+        screen_addr += (SCREEN_WIDTH * 2);
+        buffer_ptr_loc += w; 
+    }
+}
 void precalculateRotations() {
     FpF16<7> currentDirX = dirX;
     FpF16<7> currentDirY = dirY;
@@ -378,137 +430,6 @@ void updateRaycasterVectors() {
     planeX = currPlaneX;
     planeY = currPlaneY;
 }
-// void precalculateRotations() {
-//     FpF16<7> currentDirX = dirX;
-//     FpF16<7> currentDirY = dirY;
-//     FpF16<7> currentPlaneX = planeX;
-//     FpF16<7> currentPlaneY = planeY;
-
-//     invW = FpF16<7>(1) / FpF16<7>(w); 
-//     FpF16<7> fw =  FpF16<7>(w);
-    
-//     texStepValues[0] = FpF16<7>(texHeight); 
-//     for (uint8_t i = 1; i < WINDOW_HEIGTH+1; i++) {
-//       texStepValues[i] =  FpF16<7>(texHeight) / FpF16<7>(i);
-//     }
-
-//     // Precalculate cameraX
-//     for(uint8_t x = 0; x < w; x++) {
-//         cameraXValues[x] = FpF16<7>(2 * x) / fw - FpF16<7>(1);
-//     }
-
-//     printf("Precalc Q1 & Neg...");
-    
-//     for (uint8_t i = 0; i < QUADRANT_STEPS; i++) {
-      
-//       dirXValues[i] = currentDirX;
-//       dirYValues[i] = currentDirY;
-//       planeXValues[i] = currentPlaneX;
-//       planeYValues[i] = currentPlaneY;
-
-//       for(uint8_t x = 0; x < w; x++) {
-//           FpF16<7> rayDirX = currentDirX + currentPlaneX * cameraXValues[x];
-//           FpF16<7> rayDirY = currentDirY + currentPlaneY * cameraXValues[x];
-          
-//           // Store Positive
-//           rayDirX_Q1[i][x] = rayDirX;
-//           rayDirY_Q1[i][x] = rayDirY;
-
-//           // --- OPTIMIZATION: Pre-calculate Negative ---
-//           // This allows us to just swap pointers later instead of doing math
-//           rayDirX_Q1_Neg[i][x] = -rayDirX;
-//           rayDirY_Q1_Neg[i][x] = -rayDirY;
-
-//           // Delta Dist (always positive)
-//           if (rayDirX == 0 || (rayDirX.GetRawVal() == -261) ) { 
-//              deltaDistX_Q1[i][x] = 127;
-//           } else { 
-//              deltaDistX_Q1[i][x] = fp_abs(FpF16<7>(1) / rayDirX); 
-//           }
-
-//           if (rayDirY == 0 || (rayDirY.GetRawVal() == -261)) { 
-//              deltaDistY_Q1[i][x] = 127;
-//           } else { 
-//              deltaDistY_Q1[i][x] = fp_abs(FpF16<7>(1) / rayDirY); 
-//           }
-//       }
-
-//       FpF16<7> oldDirX = currentDirX;
-//       currentDirX = currentDirX * cos_r - currentDirY * sin_r;
-//       currentDirY = oldDirX * sin_r + currentDirY * cos_r;
-
-//       FpF16<7> oldPlaneX = currentPlaneX;
-//       currentPlaneX = currentPlaneX * cos_r - currentPlaneY * sin_r;
-//       currentPlaneY = oldPlaneX * sin_r + currentPlaneY * cos_r;
-//     }
-//     printf("Done\n");
-// }
-
-// --- OPTIMIZATION: Zero-Copy Vector Update ---
-// void updateRaycasterVectors() {
-//     uint8_t quad = currentRotStep / QUADRANT_STEPS;
-//     uint8_t idx = currentRotStep % QUADRANT_STEPS;
-
-//     FpF16<7> currDirX, currDirY, currPlaneX, currPlaneY;
-
-//     // We simply point to the correct pre-calculated arrays based on rotation symmetry.
-//     // No loops, no copying.
-//     switch(quad) {
-//         case 0: // 0-90 deg
-//             currDirX = dirXValues[idx]; currDirY = dirYValues[idx];
-//             currPlaneX = planeXValues[idx]; currPlaneY = planeYValues[idx];
-            
-//             activeRayDirX = rayDirX_Q1[idx];
-//             activeRayDirY = rayDirY_Q1[idx];
-//             activeDeltaDistX = deltaDistX_Q1[idx];
-//             activeDeltaDistY = deltaDistY_Q1[idx];
-//             break;
-
-//         case 1: // 90-180 deg: (x,y) -> (-y, x)
-//             currDirX = -dirYValues[idx]; currDirY = dirXValues[idx];
-//             currPlaneX = -planeYValues[idx]; currPlaneY = planeXValues[idx];
-
-//             // RayX uses NegY table, RayY uses PosX table
-//             activeRayDirX = rayDirY_Q1_Neg[idx]; 
-//             activeRayDirY = rayDirX_Q1[idx];
-            
-//             // Delta distances swap X/Y
-//             activeDeltaDistX = deltaDistY_Q1[idx];
-//             activeDeltaDistY = deltaDistX_Q1[idx];
-//             break;
-
-//         case 2: // 180-270 deg: (x,y) -> (-x, -y)
-//             currDirX = -dirXValues[idx]; currDirY = -dirYValues[idx];
-//             currPlaneX = -planeXValues[idx]; currPlaneY = -planeYValues[idx];
-
-//             // RayX uses NegX table, RayY uses NegY table
-//             activeRayDirX = rayDirX_Q1_Neg[idx];
-//             activeRayDirY = rayDirY_Q1_Neg[idx];
-            
-//             // Delta distances same as Q1
-//             activeDeltaDistX = deltaDistX_Q1[idx];
-//             activeDeltaDistY = deltaDistY_Q1[idx];
-//             break;
-
-//         case 3: // 270-360 deg: (x,y) -> (y, -x)
-//             currDirX = dirYValues[idx]; currDirY = -dirXValues[idx];
-//             currPlaneX = planeYValues[idx]; currPlaneY = -planeXValues[idx];
-
-//             // RayX uses PosY table, RayY uses NegX table
-//             activeRayDirX = rayDirY_Q1[idx];
-//             activeRayDirY = rayDirX_Q1_Neg[idx];
-            
-//             // Delta distances swap X/Y
-//             activeDeltaDistX = deltaDistY_Q1[idx];
-//             activeDeltaDistY = deltaDistX_Q1[idx];
-//             break;
-//     }
-
-//     dirX = currDirX;
-//     dirY = currDirY;
-//     planeX = currPlaneX;
-//     planeY = currPlaneY;
-// }
 
 void precalculateLineHeights() {
     lineHeightTable[0] = 255; 
@@ -669,7 +590,12 @@ int raycastF() {
         }
     }
     
-    drawBufferDouble_Optimized();
+    // drawBufferDouble_Optimized();
+    if (bigMode) {
+        drawBufferDouble_Optimized();
+    } else {
+        drawBufferDouble_Optimized_Interlaced(true);
+    }
     return 0;
 }
 
@@ -902,6 +828,7 @@ int16_t main() {
                 }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;
+                    fillBuffer(BLACK);
                     draw_ui();
                 }
                 if (key(KEY_ESC)) {
