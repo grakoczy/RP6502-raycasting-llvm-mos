@@ -5,10 +5,11 @@ import re
 
 # Your predefined list of image files
 image_files = [
-    "greystone32x32.png",
-    "greystone32x32dark.png",
-    "redbrick32x32.png",
-    "redbrick32x32dark.png"
+    "greystone16x16.png",
+    "greystone16x16dark.png",
+    "redbrick16x16.png",
+    "redbrick16x16dark.png"#,
+    # "pillar16x16.png"
 ]
 
 def load_palette_from_h(filename="palette.h"):
@@ -87,17 +88,19 @@ def generate_header_constants(output_file, texture_size, num_textures):
     header_content += f"#define texHeight {height}\n"
     header_content += f"#define NUM_TEXTURES {num_textures}\n\n"
     header_content += f"// Texture base address in XRAM (set this in CMakeLists.txt)\n"
-    header_content += f"#define TEXTURE_BASE 0x10000\n\n"
+    header_content += f"#define TEXTURE_BASE 0x1E100\n\n"
     header_content += f"// Helper function to get texture pixel\n"
     header_content += f"inline uint8_t getTexturePixel(uint8_t texNum, uint16_t offset) {{\n"
-    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 10) + offset;\n"
+    # header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 10) + offset;\n"
+    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 8) + offset;\n"
     header_content += f"    RIA.step0 = 0;\n"
     header_content += f"    return RIA.rw0;\n"
     header_content += f"}}\n\n"
     header_content += f"// Optimized function to fetch entire texture column\n"
     header_content += f"extern uint8_t texColumnBuffer[{height}];\n"
     header_content += f"inline void fetchTextureColumn(uint8_t texNum, uint8_t texX) {{\n"
-    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 10) + texX;\n"
+    # header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 10) + texX;\n"
+    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 8) + texX;\n"
     header_content += f"    RIA.step0 = {width};\n"
     header_content += f"    for (uint8_t i = 0; i < {height}; ++i) {{\n"
     header_content += f"        texColumnBuffer[i] = RIA.rw0;\n"
@@ -114,7 +117,7 @@ def main():
     # Define the output binary file name
     output_binary = "textures.bin"
     output_header = "textures.h"
-    texture_size = (32, 32)  # Define a fixed texture size (32x32)
+    texture_size = (16, 16)  # Define a fixed texture size (16x16)
 
     # Generate textures from the predefined list of images
     textures = []
@@ -137,7 +140,7 @@ def main():
     print("Next steps:")
     print("="*60)
     print("1. Update CMakeLists.txt:")
-    print("   rp6502_asset(raycast 0x11000 textures.bin)")
+    print("   rp6502_asset(raycast 0x1E100 textures.bin)")
     print("   rp6502_executable(raycast textures.bin.rp6502 ...)")
     print("="*60)
 

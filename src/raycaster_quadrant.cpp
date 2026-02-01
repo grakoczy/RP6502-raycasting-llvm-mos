@@ -73,6 +73,9 @@ const uint8_t w = WINDOW_WIDTH;
 const uint8_t h = WINDOW_HEIGTH; 
 bool bigMode = true;
 
+// Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
+const uint8_t texRepeat = 4;
+
 uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
 uint8_t ceilingColors[WINDOW_HEIGTH];
@@ -123,7 +126,7 @@ FpF16<7>* activeDeltaDistY;
 FpF16<7> cameraXValues[WINDOW_WIDTH];
 
 int16_t texOffsetTable[64]; 
-uint8_t texColumnBuffer[32]; 
+uint8_t texColumnBuffer[16]; 
 
 // values for sprite rotation
 static const int16_t sin_fix8_48[] = {
@@ -293,9 +296,9 @@ void precalculateRotations() {
     invW = FpF16<7>(1) / FpF16<7>(w); 
     FpF16<7> fw = FpF16<7>(w);
     
-    texStepValues[0] = FpF16<7>(texHeight); 
+    texStepValues[0] = FpF16<7>(texHeight * texRepeat); 
     for (uint8_t i = 1; i < WINDOW_HEIGTH+1; i++) {
-      texStepValues[i] = FpF16<7>(texHeight) / FpF16<7>(i);
+      texStepValues[i] = FpF16<7>(texHeight * texRepeat) / FpF16<7>(i);
     }
 
     for(uint8_t x = 0; x < w; x++) {
@@ -522,7 +525,7 @@ int raycastF() {
             if (lineHeight > 255) lineHeight = 255;
         }
         
-        uint8_t texNum = (worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side;
+        uint8_t texNum = ((worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side) % NUM_TEXTURES;
         int16_t drawStart = (-((int16_t)lineHeight) >> 1) + (h >> 1);
         if (drawStart < 0) drawStart = 0;
         uint16_t drawEnd = drawStart + lineHeight;
@@ -535,7 +538,7 @@ int raycastF() {
             (posX + perpWallDist * FpF16<7>::FromRaw(rDX));
         wallX -= floorFixed(wallX);
         
-        int texX = (int)(wallX * FpF16<7>(texWidth));
+        int texX = (int)(wallX * FpF16<7>(texWidth * texRepeat)) % texWidth;
         if(zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
         if(zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
 
@@ -543,7 +546,7 @@ int raycastF() {
         
         int16_t raw_step = (lineHeight <= h) ?
             texStepValues[lineHeight].GetRawVal() :
-            (FpF16<7>(texHeight) / FpF16<7>((int16_t)lineHeight)).GetRawVal();
+            (FpF16<7>(texHeight * texRepeat) / FpF16<7>((int16_t)lineHeight)).GetRawVal();
         int16_t raw_texPos = (lineHeight > h) ? 
             texOffsetTable[(lineHeight > 63) ? 63 : lineHeight] : 0;
         if (raw_texPos < 0) raw_texPos = 0;
