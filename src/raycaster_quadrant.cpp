@@ -498,19 +498,27 @@ void renderSprites() {
         FpF16<7> screenXFp = FpF16<7>(w >> 1) * (FpF16<7>(1) + transformX / transformY);
         int16_t spriteScreenX = (int16_t)screenXFp;
         
-        // Calculate sprite height on screen (quarter of wall height)
-        // Sprite size = h / (4 * transformY)
-        FpF16<7> spriteHeightFp = FpF16<7>(h) / (transformY * FpF16<7>(4));
-        int16_t spr_height = (int16_t)spriteHeightFp;
-        if (spr_height < 0) spr_height = 0;
+        // Calculate sprite positioning like a wall would be rendered
+        // First get the wall height at this distance for reference
+        FpF16<7> wallHeightFp = FpF16<7>(h) / transformY;
+        int16_t wall_height = (int16_t)wallHeightFp;
+        if (wall_height > h * 2) wall_height = h * 2; // Clamp for safety
+        
+        // Sprite is quarter of wall height (as specified)
+        int16_t spr_height = wall_height / 2;
+        if (spr_height < 1) spr_height = 1;
         if (spr_height > h) spr_height = h;
         
-        // Calculate draw boundaries Y - place sprite on floor (bottom of screen)
-        // Horizon is at h/2, so floor starts there
-        int16_t drawStartY = (h >> 1) - spr_height;  // Start above floor
+        // Position sprite like a short wall sitting on the floor
+        // Walls are centered on h/2, so bottom is at: h/2 + wall_height/2
+        // Sprite bottom aligns with wall bottom, sprite is just shorter
+        int16_t wall_bottom = (h / 2) + (wall_height / 2);
+        int16_t drawEndY = wall_bottom;
+        int16_t drawStartY = drawEndY - spr_height;
+        
+        // Clamp to screen bounds
         if (drawStartY < 0) drawStartY = 0;
-        int16_t drawEndY = h >> 1;  // End at horizon/floor line
-        if (drawEndY >= h) drawEndY = h - 1;
+        if (drawEndY > h) drawEndY = h;
         
         // Calculate sprite width (same as height for square sprites)
         int16_t spr_width = spr_height; // Square aspect ratio
@@ -522,11 +530,12 @@ void renderSprites() {
         if (drawEndX >= w) drawEndX = w - 1;
         
         // Skip if sprite is completely off screen
-        if (drawStartX >= w || drawEndX < 0) continue;
+        if (drawStartX >= w || drawEndX < 0 || drawStartY >= h || drawEndY < 0) continue;
         
-        // Scale transformY to match ZBuffer scale (0-255)
-        uint8_t spriteZBufValue = (transformY.GetRawVal() < 16384) ?
-            (uint8_t)((transformY.GetRawVal() * 255) / 16384) : 255;
+        // Get sprite distance and scale to match ZBuffer format (0-255)
+        int16_t spriteDistRaw = transformY.GetRawVal();
+        uint8_t spriteZBuf = (spriteDistRaw < 16384) ? 
+            (uint8_t)((spriteDistRaw * 255) / 16384) : 255;
         
         // Loop through every vertical stripe of the sprite on screen
         for (int16_t stripe = drawStartX; stripe < drawEndX; stripe++) {
@@ -537,25 +546,28 @@ void renderSprites() {
             if (texX < 0) texX = 0;
             if (texX >= 16) texX = 15;
             
-            // Check ZBuffer - only draw if sprite is closer than wall
-            if (spriteZBufValue < ZBuffer[stripe]) {
-                // DEBUG: Draw solid white for testing
-                for (int16_t y = drawStartY; y < drawEndY; y++) {
-                    buffer[y * w + stripe] = WHITE; // 255 or WHITE constant
-                }
+            // Draw sprite if closer than wall OR no wall at all
+            // Use <= to draw even when at same distance (prefer sprite over wall)
+            if (spriteDistRaw > 0 && spriteZBuf <= ZBuffer[stripe]) {
+                // Fetch sprite column from XRAM
+                fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
                 
-                // ORIGINAL CODE (commented for testing):
-                // fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
-                // for (int16_t y = drawStartY; y < drawEndY; y++) {
-                //     int16_t d = (y << 8) - (h << 7) + (spr_height << 7);
-                //     int16_t texY = ((d * 16) / spr_height) >> 8;
-                //     if (texY < 0) texY = 0;
-                //     if (texY >= 16) texY = 15;
-                //     uint8_t color = sprColumnBuffer[texY];
-                //     if (color != 0) {
-                //         buffer[y * w + stripe] = color;
-                //     }
-                // }
+                // Draw vertical stripe
+                for (int16_t y = drawStartY; y < drawEndY; y++) {
+                    // Map texture Y based on sprite position, not screen center
+                    // texY = 0 at drawStartY (top), texY = 15 at drawEndY (bottom)
+                    int16_t texY = ((y - drawStartY) * 16) / spr_height;
+                    if (texY < 0) texY = 0;
+                    if (texY >= 16) texY = 15;
+                    
+                    // Get pixel color from sprite texture
+                    uint8_t color = sprColumnBuffer[texY];
+                    
+                    // Draw all pixels for now (including black) for debugging
+                    if (color != 65) { // Treat color 0 as transparent
+                        buffer[y * w + stripe] = color;
+                    }
+                }
             }
         }
     }

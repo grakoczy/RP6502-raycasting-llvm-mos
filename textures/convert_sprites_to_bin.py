@@ -5,7 +5,7 @@ import re
 
 # Your predefined list of image files
 image_files = [
-    "barrel16x16.png"
+    "barrel_16x16.png"
 ]
 
 def load_palette_from_h(filename="palette.h"):
