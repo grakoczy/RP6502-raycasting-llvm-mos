@@ -12,6 +12,7 @@ extern "C" {
 #include "usb_hid_keys.h"
 #include "bitmap_graphics.hpp"
 #include "textures.h"
+#include "sprites.h"
 #include "FpF.hpp"
 #include "maze.h"
 #include "palette.h"
@@ -80,6 +81,20 @@ uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
 uint8_t floorColors[WINDOW_HEIGTH];
 uint8_t ceilingColors[WINDOW_HEIGTH];
 
+// ZBuffer for sprite depth testing (stores perpendicular wall distance per stripe)
+uint8_t ZBuffer[WINDOW_WIDTH];
+
+// Sprite structure
+struct Sprite {
+    FpF16<7> x;
+    FpF16<7> y;
+    uint8_t texture;
+};
+
+// Sprite definitions (kept minimal for RAM - only 2-3 sprites)
+#define numSprites 2
+Sprite sprites[numSprites];
+
 bool gamestate_changed = true;
 uint8_t gamestate = 1;  
 uint8_t gamestate_prev = 1;
@@ -127,6 +142,7 @@ FpF16<7> cameraXValues[WINDOW_WIDTH];
 
 int16_t texOffsetTable[64]; 
 uint8_t texColumnBuffer[16]; 
+uint8_t sprColumnBuffer[16]; // Buffer for sprite column data
 
 // values for sprite rotation
 static const int16_t sin_fix8_48[] = {
@@ -451,6 +467,100 @@ void precalculateLineHeights() {
     }
 }
 
+// Render sprites using raycasting sprite projection
+void renderSprites() {
+    // Skip if no sprites
+    if (numSprites == 0) return;
+    
+    // Calculate inverse determinant for camera transformation
+    // invDet = 1 / (planeX * dirY - dirX * planeY)
+    FpF16<7> det = planeX * dirY - dirX * planeY;
+    if (det.GetRawVal() == 0) return; // Avoid division by zero
+    FpF16<7> invDet = FpF16<7>(1) / det;
+    
+    // For each sprite (no sorting needed for 2-3 sprites, draw far to near)
+    for (int8_t i = numSprites - 1; i >= 0; i--) {
+        // Translate sprite position to relative to camera
+        FpF16<7> spriteX = sprites[i].x - posX;
+        FpF16<7> spriteY = sprites[i].y - posY;
+        
+        // Transform sprite with the inverse camera matrix
+        // transformX = invDet * (dirY * spriteX - dirX * spriteY)
+        // transformY = invDet * (-planeY * spriteX + planeX * spriteY)
+        FpF16<7> transformX = invDet * (dirY * spriteX - dirX * spriteY);
+        FpF16<7> transformY = invDet * (-planeY * spriteX + planeX * spriteY);
+        
+        // Skip if sprite is behind camera
+        if (transformY.GetRawVal() <= 0) continue;
+        
+        // Calculate sprite screen X position
+        // spriteScreenX = (w / 2) * (1 + transformX / transformY)
+        FpF16<7> screenXFp = FpF16<7>(w >> 1) * (FpF16<7>(1) + transformX / transformY);
+        int16_t spriteScreenX = (int16_t)screenXFp;
+        
+        // Calculate sprite height on screen (quarter of wall height)
+        // Sprite size = h / (4 * transformY)
+        FpF16<7> spriteHeightFp = FpF16<7>(h) / (transformY * FpF16<7>(4));
+        int16_t spr_height = (int16_t)spriteHeightFp;
+        if (spr_height < 0) spr_height = 0;
+        if (spr_height > h) spr_height = h;
+        
+        // Calculate draw boundaries Y - place sprite on floor (bottom of screen)
+        // Horizon is at h/2, so floor starts there
+        int16_t drawStartY = (h >> 1) - spr_height;  // Start above floor
+        if (drawStartY < 0) drawStartY = 0;
+        int16_t drawEndY = h >> 1;  // End at horizon/floor line
+        if (drawEndY >= h) drawEndY = h - 1;
+        
+        // Calculate sprite width (same as height for square sprites)
+        int16_t spr_width = spr_height; // Square aspect ratio
+        
+        // Calculate draw boundaries X
+        int16_t drawStartX = -spr_width / 2 + spriteScreenX;
+        if (drawStartX < 0) drawStartX = 0;
+        int16_t drawEndX = spr_width / 2 + spriteScreenX;
+        if (drawEndX >= w) drawEndX = w - 1;
+        
+        // Skip if sprite is completely off screen
+        if (drawStartX >= w || drawEndX < 0) continue;
+        
+        // Scale transformY to match ZBuffer scale (0-255)
+        uint8_t spriteZBufValue = (transformY.GetRawVal() < 16384) ?
+            (uint8_t)((transformY.GetRawVal() * 255) / 16384) : 255;
+        
+        // Loop through every vertical stripe of the sprite on screen
+        for (int16_t stripe = drawStartX; stripe < drawEndX; stripe++) {
+            // Skip if stripe is out of bounds
+            if (stripe < 0 || stripe >= w) continue;
+            // Calculate texture X coordinate (map screen stripe to 0-15 texture range)
+            int16_t texX = ((stripe - drawStartX) * 16) / spr_width;
+            if (texX < 0) texX = 0;
+            if (texX >= 16) texX = 15;
+            
+            // Check ZBuffer - only draw if sprite is closer than wall
+            if (spriteZBufValue < ZBuffer[stripe]) {
+                // DEBUG: Draw solid white for testing
+                for (int16_t y = drawStartY; y < drawEndY; y++) {
+                    buffer[y * w + stripe] = WHITE; // 255 or WHITE constant
+                }
+                
+                // ORIGINAL CODE (commented for testing):
+                // fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
+                // for (int16_t y = drawStartY; y < drawEndY; y++) {
+                //     int16_t d = (y << 8) - (h << 7) + (spr_height << 7);
+                //     int16_t texY = ((d * 16) / spr_height) >> 8;
+                //     if (texY < 0) texY = 0;
+                //     if (texY >= 16) texY = 15;
+                //     uint8_t color = sprColumnBuffer[texY];
+                //     if (color != 0) {
+                //         buffer[y * w + stripe] = color;
+                //     }
+                // }
+            }
+        }
+    }
+}
+
 int raycastF() {
     // 1. Use the pointers already set by updateRaycasterVectors()
     // This avoids 2D array indexing overhead inside the frame
@@ -511,10 +621,23 @@ int raycastF() {
             }
         }
 
-        // 5. Calculate Distance using ZP variables
         int16_t rawDist = (zp_side == 0) ? 
             (zp_sideDistX - zp_deltaX) : 
             (zp_sideDistY - zp_deltaY);
+        
+        // Store in ZBuffer for sprite rendering (scale to 0-255 range)
+        // Distance of 127 (max FpF16<7>) maps to 255
+        if (rawDist >= 0 && rawDist < 16384) {
+            ZBuffer[zp_x] = (uint8_t)((rawDist * 255) / 16384);
+            if (currentStep == 2 && zp_x + 1 < w) {
+                ZBuffer[zp_x + 1] = ZBuffer[zp_x];
+            }
+        } else {
+            ZBuffer[zp_x] = 255;
+            if (currentStep == 2 && zp_x + 1 < w) {
+                ZBuffer[zp_x + 1] = 255;
+            }
+        }
         
         uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
@@ -593,12 +716,16 @@ int raycastF() {
         }
     }
     
-    // drawBufferDouble_Optimized();
+    // Render sprites to buffer after walls but before drawing to screen
+    renderSprites();
+    
+    // Draw buffer to screen
     if (bigMode) {
         drawBufferDouble_Optimized();
     } else {
         drawBufferDouble_Optimized_Interlaced(true);
     }
+    
     return 0;
 }
 
@@ -756,6 +883,17 @@ int16_t main() {
 
     posX = FpF16<7>(startPoxY);
     posY = FpF16<7>(startPosX);
+
+    // Initialize sprites near player start
+    // First sprite: one unit to the right (+1 in X)
+    sprites[0].x = posX + FpF16<7>(1);
+    sprites[0].y = posY;
+    sprites[0].texture = 0; // First sprite texture
+    
+    // Second sprite: slightly further and offset
+    sprites[1].x = posX + FpF16<7>(2);
+    sprites[1].y = posY + FpF16<7>(1);
+    sprites[1].texture = 0;
 
     printf("Precalculating values...\n");
     precalculateRotations();
