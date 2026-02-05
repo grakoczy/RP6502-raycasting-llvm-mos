@@ -93,8 +93,8 @@ struct Sprite {
     uint8_t texture;
 };
 
-// Sprite definitions (kept minimal for RAM - only 2-3 sprites)
-#define numSprites 3
+// Sprite definitions
+#define numSprites 10
 Sprite sprites[numSprites];
 
 bool gamestate_changed = true;
@@ -812,6 +812,19 @@ void draw_map() {
         fill_rect_fast(color, j * 2 + startX, i * 2 + startY, 2, 2);
       }
     }
+
+    // Draw Sprites on map
+    for(int i = 0; i < numSprites; i++) {
+        int sX = (int)sprites[i].x;
+        int sY = (int)sprites[i].y;
+        
+        // Ensure within bounds
+        if (sX >= 0 && sX < mapWidth && sY >= 0 && sY < mapHeight) {
+             uint8_t color = 10 + sprites[i].texture;
+             draw_pixel(color, sX * 2 + startX, sY * 2 + startY);
+            //  fill_rect_fast(color, sX * 2 + startX, sY * 2 + startY, 2, 2);
+        }
+    }
 #else
     FpF16<7> ts(TILE_SIZE);
     for (int i = 0; i < mapHeight; i++) {
@@ -914,6 +927,45 @@ void init_needle_sprite() {
     xregn(1, 0, 1, 5, 4, 1, NEEDLE_CONFIG_ADDR, 1, 1);
 }
 
+void placeSprites() {
+    for (int i = 0; i < numSprites; i++) {
+        int x, y;
+        bool valid = false;
+        int attempts = 0;
+        while (!valid) {
+            x = abs(rand()) % mapWidth;
+            y = abs(rand()) % mapHeight;
+            
+            if (worldMap[y][x] == 0) {
+                valid = true;
+                // Check if occupied by another sprite within a wider area (avoid clusters)
+                for (int j = 0; j < i; j++) {
+                    int sx = (int)sprites[j].x;
+                    int sy = (int)sprites[j].y;
+                    
+                    // Check for overlap within 2 tiles distance (covers 3x3 area centering on sprite)
+                    if (abs(x - sx) < 2 && abs(y - sy) < 2) {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            
+            attempts++;
+            if (attempts > 200) {
+                // If we can't find a spot, just place it (or could skip)
+                // We'll accept the last random pos if it was at least on a floor
+                if (worldMap[y][x] == 0) valid = true;
+            }
+        }
+
+        // Place in center of cell
+        sprites[i].x = FpF16<7>(x) + FpF16<7>(0.5);
+        sprites[i].y = FpF16<7>(y) + FpF16<7>(0.5);
+        sprites[i].texture = abs(rand()) % NUM_SPRITES;
+    }
+}
+
 int16_t main() {
     bool handled_key = false;
     bool paused = false;
@@ -951,21 +1003,7 @@ int16_t main() {
     // print_map();
     // WaitForAnyKey();
 
-    // Initialize sprites near player start
-    // First sprite: one unit to the right (+1 in X)
-    sprites[0].x = posX + FpF16<7>(1);
-    sprites[0].y = posY;
-    sprites[0].texture = 0; // First sprite texture
-    
-    // Second sprite: slightly further and offset
-    sprites[1].x = posX + FpF16<7>(1);
-    sprites[1].y = posY + FpF16<7>(1);
-    sprites[1].texture = 1;
-
-    // Second sprite: slightly further and offset
-    sprites[2].x = posX + FpF16<7>(2);
-    sprites[2].y = posY + FpF16<7>(1);
-    sprites[2].texture = 2;
+    placeSprites();
 
     printf("Precalculating values...\n");
     precalculateRotations();
