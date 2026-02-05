@@ -7,9 +7,9 @@
 // #include <cmath>
 // #include <iostream>
 
-#define maxMapSize 26
-#define mapWidth 24
-#define mapHeight 24
+#define maxMapSize 16
+#define mapWidth 16
+#define mapHeight 16
 #define TILE_SIZE 1
 
 int8_t worldMap[mapHeight][mapWidth];

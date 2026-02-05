@@ -295,28 +295,36 @@ void draw_vline(uint16_t color, uint16_t x, uint16_t y, uint16_t h)
         uint16_t row_addr;
         uint8_t color_low = color & 0xFF;
         uint8_t color_high = color >> 8;
+        uint16_t stride = canvas_w << 1;
+
+        // Calculate the starting address
+        row_addr = ((canvas_w << 1) * y) + (x << 1);
 
         for (uint16_t i = 0; i < h; i++) {
-            // Calculate the address for the current pixel in the column
-            row_addr = ((canvas_w << 1) * (y + i)) + (x << 1);
-
             // Set the address and color for the current pixel
             RIA.addr0 = row_addr;
             RIA.step0 = 1;
             RIA.rw0 = color_low;
             RIA.rw0 = color_high;
+            
+            // Advance to next row
+            row_addr += stride;
         }
     } else if (bpp_mode == 3) { // Only optimize for 8bpp mode
         uint16_t row_addr;
+        uint16_t stride = canvas_w;
+
+        // Calculate the starting address
+        row_addr = (canvas_w * y) + x;
 
         for (uint16_t i = 0; i < h; i++) {
-            // Calculate the address for the current pixel in the column
-            row_addr = ((canvas_w) * (y + i)) + (x );
-
             // Set the address and color for the current pixel
             RIA.addr0 = row_addr;
             RIA.step0 = 1;
             RIA.rw0 = color;
+            
+            // Advance to next row
+            row_addr += stride;
         }
     }
     else {

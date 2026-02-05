@@ -27,8 +27,8 @@ extern "C" {
 
 __attribute__((section(".zp.bss"))) static uint8_t zp_x;
 __attribute__((section(".zp.bss"))) static uint8_t zp_y;
-__attribute__((section(".zp.bss"))) static int zp_mapX;
-__attribute__((section(".zp.bss"))) static int zp_mapY;
+__attribute__((section(".zp.bss"))) static uint8_t zp_mapX;
+__attribute__((section(".zp.bss"))) static uint8_t zp_mapY;
 __attribute__((section(".zp.bss"))) static uint8_t zp_side;
 __attribute__((section(".zp.bss"))) static int16_t zp_sideDistX;
 __attribute__((section(".zp.bss"))) static int16_t zp_sideDistY;
@@ -58,8 +58,10 @@ FpF16<7> playerScale(5);
 FpF16<7> sin_r(0.130526192); 
 FpF16<7> cos_r(0.991444861); 
 
-uint16_t startX = 151+(26-mapWidth)/2;
-uint16_t startY = 137+(26-mapHeight)/2;
+// uint16_t startX = 151+mapWidth/2;
+// uint16_t startY = 137+mapHeight/2;
+uint16_t startX = 148;
+uint16_t startY = 134;
 
 uint16_t prevPlayerX, prevPlayerY;
 
@@ -627,37 +629,44 @@ int raycastF() {
         
         zp_mapX = mapX_start;
         zp_mapY = mapY_start;
-        int8_t stepX, stepY;
+        
+        // Flattened map access optimization (mapWidth=16)
+        uint8_t mapOffset = (zp_mapY << 4) + zp_mapX;
+        int8_t mapStepX; 
+        int8_t mapStepY;
 
         // 3. FAST SideDist Calculation
         if(rDX < 0) {
-            stepX = -1;
+            mapStepX = -1;
             zp_sideDistX = ((int32_t)fracX * zp_deltaX) >> 7;
         } else {
-            stepX = 1;
+            mapStepX = 1;
             zp_sideDistX = ((int32_t)invFracX * zp_deltaX) >> 7;
         }
         
         if(rDY < 0) {
-            stepY = -1;
+            mapStepY = -16; // -mapWidth
             zp_sideDistY = ((int32_t)fracY * zp_deltaY) >> 7;
         } else {
-            stepY = 1;
+            mapStepY = 16; // +mapWidth
             zp_sideDistY = ((int32_t)invFracY * zp_deltaY) >> 7;
         }
         
         // 4. Tight DDA Loop
-        while(worldMap[zp_mapX][zp_mapY] == 0) {
+        int8_t* mapPtr = (int8_t*)worldMap;
+        while(mapPtr[mapOffset] == 0) {
             if(zp_sideDistX < zp_sideDistY) {
                 zp_sideDistX += zp_deltaX;
-                zp_mapX += stepX;
+                mapOffset += mapStepX;
                 zp_side = 0;
             } else {
                 zp_sideDistY += zp_deltaY;
-                zp_mapY += stepY;
+                mapOffset += mapStepY;
                 zp_side = 1;
             }
         }
+        
+        // Coordinates reconstruction removed (unused)
 
         int16_t rawDist = (zp_side == 0) ? 
             (zp_sideDistX - zp_deltaX) : 
@@ -679,7 +688,7 @@ int raycastF() {
             if (lineHeight > 255) lineHeight = 255;
         }
         
-        uint8_t texNum = ((worldMap[zp_mapX][zp_mapY] - 1) * 2 + zp_side) % NUM_TEXTURES;
+        uint8_t texNum = ((mapPtr[mapOffset] - 1) * 2 + zp_side) & (NUM_TEXTURES - 1);
         int16_t drawStart = (-((int16_t)lineHeight) >> 1) + (h >> 1);
         if (drawStart < 0) drawStart = 0;
         uint16_t drawEnd = drawStart + lineHeight;
@@ -778,10 +787,32 @@ void print_map() {
 }
 
 void draw_ui() {
-  fill_rect_fast(DARK_GREEN, 150, 136, 28, 28);
+  fill_rect_fast(DARK_GREEN, startX, startY, 32, 32);
 }
 
 void draw_map() {
+#if TILE_SIZE == 1
+    // Scaled to 2x2 pixels for visibility
+    for (int i = 0; i < mapHeight; i++) {
+      for (int j = 0; j < mapWidth; j++) {
+        uint8_t color;
+        if (worldMap[i][j] > 0) {
+          switch(worldMap[i][j])
+          {
+            case 1: color = 37; break; 
+            case 2: color = RED; break; 
+            case 3: color = BLUE; break; 
+            case 4: color = WHITE; break; 
+            case 5: color = YELLOW; break; 
+            default: color = 37; break;
+          }
+        } else {
+            color = DARK_GREEN;
+        }
+        fill_rect_fast(color, j * 2 + startX, i * 2 + startY, 2, 2);
+      }
+    }
+#else
     FpF16<7> ts(TILE_SIZE);
     for (int i = 0; i < mapHeight; i++) {
       for (int j = 0; j < mapWidth; j++) {
@@ -795,12 +826,13 @@ void draw_map() {
             case 4: color = WHITE; break; 
             case 5: color = YELLOW; break; 
           }
-          draw_rect(color, i * TILE_SIZE + startX, j * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
+          draw_rect(color, j * TILE_SIZE + startX, i * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
           } else {
-            draw_rect(DARK_GREEN, i * TILE_SIZE + startX, j * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
+            draw_rect(DARK_GREEN, j * TILE_SIZE + startX, i * TILE_SIZE + startY, TILE_SIZE, TILE_SIZE);
           }
       }
     }
+#endif
 } 
 
 void draw_needle() {
@@ -822,12 +854,13 @@ void draw_needle() {
 
 
 void draw_player(){
-    FpF16<7> ts(TILE_SIZE);
+    // Scale 2x for visibility
+    FpF16<7> ts(2);
     uint16_t x = (int)(posX * ts) + startX;
     uint16_t y = (int)(posY * ts) + startY;
     
-    draw_pixel(DARK_GREEN, prevPlayerX, prevPlayerY);
-    draw_pixel(YELLOW, x, y);
+    fill_rect_fast(DARK_GREEN, prevPlayerX, prevPlayerY, 2, 2);
+    fill_rect_fast(YELLOW, x, y, 2, 2);
     prevPlayerX = x;
     prevPlayerY = y;
 }
@@ -912,8 +945,11 @@ int16_t main() {
     iterativeDFS(startPosX, startPoxY);
     setEntryAndFinish(startPosX, startPoxY);
 
-    posX = FpF16<7>(startPoxY);
-    posY = FpF16<7>(startPosX);
+    posX = FpF16<7>(startPosX);
+    posY = FpF16<7>(startPoxY);
+
+    // print_map();
+    // WaitForAnyKey();
 
     // Initialize sprites near player start
     // First sprite: one unit to the right (+1 in X)
@@ -995,13 +1031,13 @@ int16_t main() {
                 }
                 if (key(KEY_UP)) {
                   gamestate = GAMESTATE_MOVING;
-                  if(worldMap[int(posX + (dirX * moveSpeed) * playerScale)][int(posY)] == false) posX += (dirX * moveSpeed);
-                  if(worldMap[int(posX)][int(posY + (dirY * moveSpeed) * playerScale)] == false) posY +=  (dirY * moveSpeed);
+                  if(worldMap[int(posY)][int(posX + (dirX * moveSpeed) * playerScale)] == false) posX += (dirX * moveSpeed);
+                  if(worldMap[int(posY + (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY +=  (dirY * moveSpeed);
                 }
                 if (key(KEY_DOWN)) {
                   gamestate = GAMESTATE_MOVING;
-                  if(worldMap[int(posX - (dirX * moveSpeed) * playerScale)][int(posY)] == false) posX -= (dirX * moveSpeed);
-                  if(worldMap[int(posX)][int(posY - (dirY * moveSpeed) * playerScale)] == false) posY -= (dirY * moveSpeed);
+                  if(worldMap[int(posY)][int(posX - (dirX * moveSpeed) * playerScale)] == false) posX -= (dirX * moveSpeed);
+                  if(worldMap[int(posY - (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY -= (dirY * moveSpeed);
                 }
                 // Strafe Right
                 if (key(KEY_D)) {
@@ -1011,8 +1047,8 @@ int16_t main() {
                   FpF16<7> strafeX = -dirY;
                   FpF16<7> strafeY = dirX;
                   
-                  if(worldMap[int(posX + (strafeX * moveSpeed) * playerScale)][int(posY)] == false) posX += (strafeX * moveSpeed);
-                  if(worldMap[int(posX)][int(posY + (strafeY * moveSpeed) * playerScale)] == false) posY += (strafeY * moveSpeed);
+                  if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
+                  if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
                 // Strafe Left
                 if (key(KEY_A)) {
@@ -1022,8 +1058,8 @@ int16_t main() {
                   FpF16<7> strafeX = dirY;
                   FpF16<7> strafeY = -dirX;
 
-                  if(worldMap[int(posX + (strafeX * moveSpeed) * playerScale)][int(posY)] == false) posX += (strafeX * moveSpeed);
-                  if(worldMap[int(posX)][int(posY + (strafeY * moveSpeed) * playerScale)] == false) posY += (strafeY * moveSpeed);
+                  if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
+                  if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;
