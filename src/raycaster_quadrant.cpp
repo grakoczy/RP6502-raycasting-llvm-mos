@@ -82,7 +82,7 @@ uint8_t floorColors[WINDOW_HEIGTH];
 uint8_t ceilingColors[WINDOW_HEIGTH];
 
 // ZBuffer for sprite depth testing (stores perpendicular wall distance per stripe)
-uint8_t ZBuffer[WINDOW_WIDTH];
+int16_t ZBuffer[WINDOW_WIDTH];
 
 // Sprite structure
 struct Sprite {
@@ -478,6 +478,8 @@ void renderSprites() {
     if (det.GetRawVal() == 0) return; // Avoid division by zero
     FpF16<7> invDet = FpF16<7>(1) / det;
     
+    int32_t w_half = (w >> 1);
+    
     // For each sprite (no sorting needed for 2-3 sprites, draw far to near)
     for (int8_t i = numSprites - 1; i >= 0; i--) {
         // Translate sprite position to relative to camera
@@ -491,23 +493,22 @@ void renderSprites() {
         FpF16<7> transformY = invDet * (-planeY * spriteX + planeX * spriteY);
         
         // Skip if sprite is behind camera
-        if (transformY.GetRawVal() <= 0) continue;
+        if (transformY.GetRawVal() <= 10) continue;
         
         // Calculate sprite screen X position
-        // spriteScreenX = (w / 2) * (1 + transformX / transformY)
-        FpF16<7> screenXFp = FpF16<7>(w >> 1) * (FpF16<7>(1) + transformX / transformY);
-        int16_t spriteScreenX = (int16_t)screenXFp;
+        int32_t tx = transformX.GetRawVal();
+        int32_t ty = transformY.GetRawVal();
+        
+        int32_t spriteScreenX = w_half + (w_half * tx) / ty;
         
         // Calculate sprite positioning like a wall would be rendered
         // First get the wall height at this distance for reference
         FpF16<7> wallHeightFp = FpF16<7>(h) / transformY;
         int16_t wall_height = (int16_t)wallHeightFp;
-        if (wall_height > h * 2) wall_height = h * 2; // Clamp for safety
         
         // Sprite is quarter of wall height (as specified)
         int16_t spr_height = wall_height / 2;
         if (spr_height < 1) spr_height = 1;
-        if (spr_height > h) spr_height = h;
         
         // Position sprite like a short wall sitting on the floor
         // Walls are centered on h/2, so bottom is at: h/2 + wall_height/2
@@ -516,59 +517,84 @@ void renderSprites() {
         int16_t drawEndY = wall_bottom;
         int16_t drawStartY = drawEndY - spr_height;
         
-        // Clamp to screen bounds
-        if (drawStartY < 0) drawStartY = 0;
-        if (drawEndY > h) drawEndY = h;
+        int16_t screen_drawStartY = drawStartY;
+        int16_t screen_drawEndY = drawEndY;
         
-        // Calculate sprite width (same as height for square sprites)
+        // Clamp to screen bounds
+        if (screen_drawStartY < 0) screen_drawStartY = 0;
+        if (screen_drawEndY > h) screen_drawEndY = h;
+        
+        if (screen_drawStartY >= screen_drawEndY) continue;
+        
         int16_t spr_width = spr_height; // Square aspect ratio
         
         // Calculate draw boundaries X
-        int16_t drawStartX = -spr_width / 2 + spriteScreenX;
-        if (drawStartX < 0) drawStartX = 0;
-        int16_t drawEndX = spr_width / 2 + spriteScreenX;
-        if (drawEndX >= w) drawEndX = w - 1;
+        int32_t drawStartX_32 = -spr_width / 2 + spriteScreenX;
+        int32_t drawEndX_32 = spr_width / 2 + spriteScreenX;
+        
+        int16_t drawStartX = (drawStartX_32 < 0) ? 0 : (int16_t)drawStartX_32;
+        int16_t drawEndX = (drawEndX_32 > w) ? w : (int16_t)drawEndX_32;
         
         // Skip if sprite is completely off screen
-        if (drawStartX >= w || drawEndX < 0 || drawStartY >= h || drawEndY < 0) continue;
+        if (drawStartX >= drawEndX) continue;
         
-        // Get sprite distance and scale to match ZBuffer format (0-255)
+        // Precalculate stepping (avoid division in loop)
+        // 16.16 fixed point for texture coordinates
+        // texStep = (16 << 16) / size
+        int32_t texStep = 1048576L / spr_height; 
+        
+        // Calculate initial texture X position
+        int16_t logicalStartX = (int16_t)(-spr_width / 2 + spriteScreenX);
+        int32_t texXPos = (int32_t)(drawStartX - logicalStartX) * texStep;
+
+        // Calculate initial texture Y position
+        // logicalStartY = drawStartY (unclamped)
+        int32_t initialTexYPos = 0;
+        if (drawStartY < 0) {
+            initialTexYPos = (int32_t)(-drawStartY) * texStep;
+        }
+        
+        // Get sprite distance
         int16_t spriteDistRaw = transformY.GetRawVal();
-        uint8_t spriteZBuf = (spriteDistRaw < 16384) ? 
-            (uint8_t)((spriteDistRaw * 255) / 16384) : 255;
         
+        // Calculate pointer to start of drawing area in buffer
+        uint8_t* colStartPtr = &buffer[screen_drawStartY * w + drawStartX];
+
+        // Cache for sprite column to avoid repeated fetches when scaling up
+        int16_t lastTexX = -1;
+
         // Loop through every vertical stripe of the sprite on screen
         for (int16_t stripe = drawStartX; stripe < drawEndX; stripe++) {
-            // Skip if stripe is out of bounds
-            if (stripe < 0 || stripe >= w) continue;
-            // Calculate texture X coordinate (map screen stripe to 0-15 texture range)
-            int16_t texX = ((stripe - drawStartX) * 16) / spr_width;
-            if (texX < 0) texX = 0;
-            if (texX >= 16) texX = 15;
             
             // Draw sprite if closer than wall OR no wall at all
-            // Use <= to draw even when at same distance (prefer sprite over wall)
-            if (spriteDistRaw > 0 && spriteZBuf <= ZBuffer[stripe]) {
-                // Fetch sprite column from XRAM
-                fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
+            if (spriteDistRaw > 0 && spriteDistRaw <= ZBuffer[stripe]) {
+                int16_t texX = texXPos >> 16;
+                if (texX > 15) texX = 15;
+
+                // Only fetch if texture column changed
+                if (texX != lastTexX) {
+                    fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
+                    lastTexX = texX;
+                }
+                
+                uint8_t* pixelPtr = colStartPtr;
+                int32_t texYPos = initialTexYPos;
                 
                 // Draw vertical stripe
-                for (int16_t y = drawStartY; y < drawEndY; y++) {
-                    // Map texture Y based on sprite position, not screen center
-                    // texY = 0 at drawStartY (top), texY = 15 at drawEndY (bottom)
-                    int16_t texY = ((y - drawStartY) * 16) / spr_height;
-                    if (texY < 0) texY = 0;
-                    if (texY >= 16) texY = 15;
-                    
+                for (int16_t y = screen_drawStartY; y < screen_drawEndY; y++) {
                     // Get pixel color from sprite texture
-                    uint8_t color = sprColumnBuffer[texY];
+                    // Masking with 0xF is faster than checking bounds, assuming 16x16
+                    uint8_t color = sprColumnBuffer[(texYPos >> 16) & 0x0F];
                     
-                    // Draw all pixels for now (including black) for debugging
-                    if (color != 65) { // Treat color 0 as transparent
-                        buffer[y * w + stripe] = color;
+                    if (color != 65) { // Treat color 65 as transparent
+                        *pixelPtr = color;
                     }
+                    pixelPtr += w;
+                    texYPos += texStep;
                 }
             }
+            texXPos += texStep;
+            colStartPtr++;
         }
     }
 }
@@ -637,18 +663,11 @@ int raycastF() {
             (zp_sideDistX - zp_deltaX) : 
             (zp_sideDistY - zp_deltaY);
         
-        // Store in ZBuffer for sprite rendering (scale to 0-255 range)
-        // Distance of 127 (max FpF16<7>) maps to 255
-        if (rawDist >= 0 && rawDist < 16384) {
-            ZBuffer[zp_x] = (uint8_t)((rawDist * 255) / 16384);
-            if (currentStep == 2 && zp_x + 1 < w) {
-                ZBuffer[zp_x + 1] = ZBuffer[zp_x];
-            }
-        } else {
-            ZBuffer[zp_x] = 255;
-            if (currentStep == 2 && zp_x + 1 < w) {
-                ZBuffer[zp_x + 1] = 255;
-            }
+        // Store in ZBuffer for sprite rendering (store raw distance)
+        int16_t zVal = (rawDist < 0) ? 0 : rawDist;
+        ZBuffer[zp_x] = zVal;
+        if (currentStep == 2 && zp_x + 1 < w) {
+            ZBuffer[zp_x + 1] = zVal;
         }
         
         uint16_t lineHeight;
