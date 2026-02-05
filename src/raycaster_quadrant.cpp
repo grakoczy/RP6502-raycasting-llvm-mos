@@ -94,7 +94,7 @@ struct Sprite {
 };
 
 // Sprite definitions (kept minimal for RAM - only 2-3 sprites)
-#define numSprites 2
+#define numSprites 3
 Sprite sprites[numSprites];
 
 bool gamestate_changed = true;
@@ -958,9 +958,14 @@ int16_t main() {
     sprites[0].texture = 0; // First sprite texture
     
     // Second sprite: slightly further and offset
-    sprites[1].x = posX + FpF16<7>(2);
+    sprites[1].x = posX + FpF16<7>(1);
     sprites[1].y = posY + FpF16<7>(1);
-    sprites[1].texture = 0;
+    sprites[1].texture = 1;
+
+    // Second sprite: slightly further and offset
+    sprites[2].x = posX + FpF16<7>(2);
+    sprites[2].y = posY + FpF16<7>(1);
+    sprites[2].texture = 2;
 
     printf("Precalculating values...\n");
     precalculateRotations();

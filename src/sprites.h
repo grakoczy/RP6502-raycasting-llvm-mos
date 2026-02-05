@@ -6,7 +6,7 @@
 // Sprite dimensions
 #define spriteWidth 16
 #define spriteHeight 16
-#define NUM_SPRITES 1
+#define NUM_SPRITES 3
 
 // Sprite base address in XRAM (set this in CMakeLists.txt)
 #define SPRITE_BASE 0x1E500
