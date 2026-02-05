@@ -8,3 +8,4 @@ Additional guidelines:
 - Use llvm-mos for 6502 compilation.
 - Platform for llvm-mos is RP6502.
 - Follow CMake build practices.
+- Try to avoid multiplications or divisions

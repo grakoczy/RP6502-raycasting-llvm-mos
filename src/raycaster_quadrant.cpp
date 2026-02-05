@@ -978,14 +978,19 @@ int16_t main() {
                 if (key(KEY_SPACE)) {
                     paused = !paused;
                 }
+                uint8_t rotateStep = 1;
+                if (key(KEY_LEFTSHIFT) || key(KEY_RIGHTSHIFT)) {
+                    rotateStep = 2;
+                }
+
                 if (key(KEY_RIGHT)){
                   gamestate = GAMESTATE_MOVING;
-                  currentRotStep = (currentRotStep + 1) % ROTATION_STEPS;
+                  currentRotStep = (currentRotStep + rotateStep) % ROTATION_STEPS;
                   updateRaycasterVectors();
                 }
                 if (key(KEY_LEFT)){
                   gamestate = GAMESTATE_MOVING;
-                  currentRotStep = (currentRotStep - 1 + ROTATION_STEPS) % ROTATION_STEPS;
+                  currentRotStep = (currentRotStep - rotateStep + ROTATION_STEPS) % ROTATION_STEPS;
                   updateRaycasterVectors();
                 }
                 if (key(KEY_UP)) {
