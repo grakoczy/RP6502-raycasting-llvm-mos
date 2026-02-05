@@ -7,8 +7,8 @@ import re
 image_files = [
     "greystone16x16.png",
     "greystone16x16dark.png",
-    "redbrick16x16.png",
-    "redbrick16x16dark.png"
+    "redbrick_16x16.png",
+    "redbrick_16x16dark.png"
 ]
 
 def load_palette_from_h(filename="palette.h"):

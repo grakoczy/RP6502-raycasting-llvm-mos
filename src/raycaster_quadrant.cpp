@@ -142,7 +142,7 @@ FpF16<7>* activeDeltaDistY;
 
 FpF16<7> cameraXValues[WINDOW_WIDTH];
 
-int16_t texOffsetTable[64]; 
+int16_t texOffsetTable[256]; 
 uint8_t texColumnBuffer[16]; 
 uint8_t sprColumnBuffer[16]; // Buffer for sprite column data
 
@@ -463,9 +463,14 @@ void precalculateLineHeights() {
         lineHeightTable[i] = (uint8_t)height;
     }
     texOffsetTable[0] = 0;
-    for (int i = 1; i < 64; i++) {
-        texOffsetTable[i] = 2048 - (int16_t)(110592L / i);
-        if (texOffsetTable[i] < 0) texOffsetTable[i] = 0;
+    for (int i = 1; i < 256; i++) {
+        if (i <= 64) {
+             texOffsetTable[i] = 0;
+        } else {
+             int32_t val = 4096 - (262144L / i);
+             if (val < 0) val = 0;
+             texOffsetTable[i] = (int16_t)val;
+        }
     }
 }
 
@@ -711,7 +716,7 @@ int raycastF() {
             texStepValues[lineHeight].GetRawVal() :
             (FpF16<7>(texHeight * texRepeat) / FpF16<7>((int16_t)lineHeight)).GetRawVal();
         int16_t raw_texPos = (lineHeight > h) ? 
-            texOffsetTable[(lineHeight > 63) ? 63 : lineHeight] : 0;
+            texOffsetTable[lineHeight] : 0;
         if (raw_texPos < 0) raw_texPos = 0;
 
         uint8_t* bufPtr = &buffer[zp_x];
