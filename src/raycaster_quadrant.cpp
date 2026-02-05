@@ -998,6 +998,28 @@ int16_t main() {
                   if(worldMap[int(posX - (dirX * moveSpeed) * playerScale)][int(posY)] == false) posX -= (dirX * moveSpeed);
                   if(worldMap[int(posX)][int(posY - (dirY * moveSpeed) * playerScale)] == false) posY -= (dirY * moveSpeed);
                 }
+                // Strafe Right
+                if (key(KEY_D)) {
+                  gamestate = GAMESTATE_MOVING;
+                  // Perpendicular vector (rotate right 90 deg: x' = -y, y' = x)
+                  // But based on analysis: Right is (-dirY, dirX)
+                  FpF16<7> strafeX = -dirY;
+                  FpF16<7> strafeY = dirX;
+                  
+                  if(worldMap[int(posX + (strafeX * moveSpeed) * playerScale)][int(posY)] == false) posX += (strafeX * moveSpeed);
+                  if(worldMap[int(posX)][int(posY + (strafeY * moveSpeed) * playerScale)] == false) posY += (strafeY * moveSpeed);
+                }
+                // Strafe Left
+                if (key(KEY_A)) {
+                  gamestate = GAMESTATE_MOVING;
+                  // Perpendicular vector (rotate left 90 deg)
+                  // Left is (dirY, -dirX)
+                  FpF16<7> strafeX = dirY;
+                  FpF16<7> strafeY = -dirX;
+
+                  if(worldMap[int(posX + (strafeX * moveSpeed) * playerScale)][int(posY)] == false) posX += (strafeX * moveSpeed);
+                  if(worldMap[int(posX)][int(posY + (strafeY * moveSpeed) * playerScale)] == false) posY += (strafeY * moveSpeed);
+                }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;
                     fillBuffer(BLACK);
