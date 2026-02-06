@@ -113,7 +113,7 @@ FpF16<7> dirYValues[QUADRANT_STEPS];
 FpF16<7> planeXValues[QUADRANT_STEPS];
 FpF16<7> planeYValues[QUADRANT_STEPS];
 
-FpF16<7> texStepValues[WINDOW_HEIGTH+1];
+FpF16<7> texStepValues[256];
 
 // --- OPTIMIZATION: Cached Tables ---
 // Q1 Positive (Standard)
@@ -124,15 +124,9 @@ FpF16<7> rayDirY_Q1[QUADRANT_STEPS][WINDOW_WIDTH];
 FpF16<7> rayDirX_Q1_Neg[QUADRANT_STEPS][WINDOW_WIDTH];
 FpF16<7> rayDirY_Q1_Neg[QUADRANT_STEPS][WINDOW_WIDTH];
 
-// Delta Dists for ALL 4 quadrants (not just Q1)
-FpF16<7> deltaDistX_Q0[QUADRANT_STEPS][WINDOW_WIDTH];  // 0-90°
+// Delta Dists for Q0 only (Q1 swaps X/Y, Q2 reuses Q0, Q3 reuses Q1 swap)
+FpF16<7> deltaDistX_Q0[QUADRANT_STEPS][WINDOW_WIDTH];
 FpF16<7> deltaDistY_Q0[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> deltaDistX_Q1[QUADRANT_STEPS][WINDOW_WIDTH];  // 90-180°
-FpF16<7> deltaDistY_Q1[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> deltaDistX_Q2[QUADRANT_STEPS][WINDOW_WIDTH];  // 180-270°
-FpF16<7> deltaDistY_Q2[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> deltaDistX_Q3[QUADRANT_STEPS][WINDOW_WIDTH];  // 270-360°
-FpF16<7> deltaDistY_Q3[QUADRANT_STEPS][WINDOW_WIDTH];
 
 // These point to the correct row in the tables above
 FpF16<7>* activeRayDirX;
@@ -315,8 +309,8 @@ void precalculateRotations() {
     FpF16<7> fw = FpF16<7>(w);
     
     texStepValues[0] = FpF16<7>(texHeight * texRepeat); 
-    for (uint8_t i = 1; i < WINDOW_HEIGTH+1; i++) {
-      texStepValues[i] = FpF16<7>(texHeight * texRepeat) / FpF16<7>(i);
+    for (uint16_t i = 1; i < 256; i++) {
+      texStepValues[i] = FpF16<7>(texHeight * texRepeat) / FpF16<7>((int16_t)i);
     }
 
     for(uint8_t x = 0; x < w; x++) {
@@ -356,27 +350,9 @@ void precalculateRotations() {
               return (delta > MAX_DELTA_DIST) ? MAX_DELTA_DIST : delta;
           };
 
-          // Q0: 0-90° - Use base directions
+          // Q0: 0-90° - Use base directions (other quadrants derived at runtime)
           deltaDistX_Q0[i][x] = calcDelta(rayDirX);
           deltaDistY_Q0[i][x] = calcDelta(rayDirY);
-
-          // Q1: 90-180° - (x,y) -> (-y, x)
-          FpF16<7> rayDirX_Q1_t = -rayDirY;
-          FpF16<7> rayDirY_Q1_t = rayDirX;
-          deltaDistX_Q1[i][x] = calcDelta(rayDirX_Q1_t);
-          deltaDistY_Q1[i][x] = calcDelta(rayDirY_Q1_t);
-
-          // Q2: 180-270° - (x,y) -> (-x, -y)
-          FpF16<7> rayDirX_Q2 = -rayDirX;
-          FpF16<7> rayDirY_Q2 = -rayDirY;
-          deltaDistX_Q2[i][x] = calcDelta(rayDirX_Q2);
-          deltaDistY_Q2[i][x] = calcDelta(rayDirY_Q2);
-
-          // Q3: 270-360° - (x,y) -> (y, -x)
-          FpF16<7> rayDirX_Q3 = rayDirY;
-          FpF16<7> rayDirY_Q3 = -rayDirX;
-          deltaDistX_Q3[i][x] = calcDelta(rayDirX_Q3);
-          deltaDistY_Q3[i][x] = calcDelta(rayDirY_Q3);
       }
 
       FpF16<7> oldDirX = currentDirX;
@@ -405,11 +381,11 @@ void updateRaycasterVectors() {
             
             activeRayDirX = rayDirX_Q1[idx];
             activeRayDirY = rayDirY_Q1[idx];
-            activeDeltaDistX = deltaDistX_Q0[idx];  // Use Q0 deltas
+            activeDeltaDistX = deltaDistX_Q0[idx];
             activeDeltaDistY = deltaDistY_Q0[idx];
             break;
 
-        case 1: // 90-180 deg
+        case 1: // 90-180 deg - (x,y)->(-y,x): swap delta X/Y
             currDirX = -dirYValues[idx]; 
             currDirY = dirXValues[idx];
             currPlaneX = -planeYValues[idx]; 
@@ -417,11 +393,11 @@ void updateRaycasterVectors() {
 
             activeRayDirX = rayDirY_Q1_Neg[idx];
             activeRayDirY = rayDirX_Q1[idx];
-            activeDeltaDistX = deltaDistX_Q1[idx];  // Use Q1 deltas
-            activeDeltaDistY = deltaDistY_Q1[idx];
+            activeDeltaDistX = deltaDistY_Q0[idx];  // Swapped: Y->X
+            activeDeltaDistY = deltaDistX_Q0[idx];  // Swapped: X->Y
             break;
 
-        case 2: // 180-270 deg
+        case 2: // 180-270 deg - (x,y)->(-x,-y): same abs values as Q0
             currDirX = -dirXValues[idx]; 
             currDirY = -dirYValues[idx];
             currPlaneX = -planeXValues[idx]; 
@@ -429,11 +405,11 @@ void updateRaycasterVectors() {
 
             activeRayDirX = rayDirX_Q1_Neg[idx];
             activeRayDirY = rayDirY_Q1_Neg[idx];
-            activeDeltaDistX = deltaDistX_Q2[idx];  // Use Q2 deltas
-            activeDeltaDistY = deltaDistY_Q2[idx];
+            activeDeltaDistX = deltaDistX_Q0[idx];  // Same as Q0
+            activeDeltaDistY = deltaDistY_Q0[idx];  // Same as Q0
             break;
 
-        case 3: // 270-360 deg
+        case 3: // 270-360 deg - (x,y)->(y,-x): swap delta X/Y
             currDirX = dirYValues[idx]; 
             currDirY = -dirXValues[idx];
             currPlaneX = planeYValues[idx]; 
@@ -441,8 +417,8 @@ void updateRaycasterVectors() {
 
             activeRayDirX = rayDirY_Q1[idx];
             activeRayDirY = rayDirX_Q1_Neg[idx];
-            activeDeltaDistX = deltaDistX_Q3[idx];  // Use Q3 deltas
-            activeDeltaDistY = deltaDistY_Q3[idx];
+            activeDeltaDistX = deltaDistY_Q0[idx];  // Swapped: Y->X
+            activeDeltaDistY = deltaDistX_Q0[idx];  // Swapped: X->Y
             break;
     }
 
@@ -699,22 +675,24 @@ int raycastF() {
         uint16_t drawEnd = drawStart + lineHeight;
         if (drawEnd > h) drawEnd = h;
 
-        // Wall X calculation using rDX and rDY
-        FpF16<7> perpWallDist = FpF16<7>::FromRaw(rawDist);
-        FpF16<7> wallX = (zp_side == 0) ? 
-            (posY + perpWallDist * FpF16<7>::FromRaw(rDY)) : 
-            (posX + perpWallDist * FpF16<7>::FromRaw(rDX));
-        wallX -= floorFixed(wallX);
-        
-        int texX = (int)(wallX * FpF16<7>(texWidth * texRepeat)) % texWidth;
+        // Wall X calculation using raw int16 arithmetic (avoids 3 FpF multiplies)
+        int16_t wallRaw;
+        if (zp_side == 0) {
+            wallRaw = posYRaw + (int16_t)(((int32_t)rawDist * rDY) >> 7);
+        } else {
+            wallRaw = posXRaw + (int16_t)(((int32_t)rawDist * rDX) >> 7);
+        }
+        // Extract 7-bit fractional part, scale by texRepeat*texWidth=64 (<<6), then >>7 = >>1
+        // Result is 0..63, mask to texWidth with & 0x0F
+        uint8_t frac7 = wallRaw & 0x7F;
+        int texX = (frac7 >> 1) & 0x0F;
         if(zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
         if(zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
 
         fetchTextureColumn(texNum, texX);
         
-        int16_t raw_step = (lineHeight <= h) ?
-            texStepValues[lineHeight].GetRawVal() :
-            (FpF16<7>(texHeight * texRepeat) / FpF16<7>((int16_t)lineHeight)).GetRawVal();
+        // Use precomputed table for all lineHeight values (no runtime division)
+        int16_t raw_step = texStepValues[lineHeight].GetRawVal();
         int16_t raw_texPos = (lineHeight > h) ? 
             texOffsetTable[lineHeight] : 0;
         if (raw_texPos < 0) raw_texPos = 0;
@@ -764,9 +742,16 @@ int raycastF() {
     // Render sprites to buffer after walls but before drawing to screen
     renderSprites();
     
-    // Draw buffer to screen
+    // Draw buffer to screen — use interlaced during movement to halve XRAM I/O
     if (bigMode) {
-        drawBufferDouble_Optimized();
+        // if (currentStep >= 2) {
+        //     // Interlaced: write only even or odd rows (halves XRAM writes)
+        //     static bool oddField = false;
+        //     drawBufferDouble_Optimized_Interlaced(oddField);
+        //     oddField = !oddField;
+        // } else {
+            drawBufferDouble_Optimized();
+        // }
     } else {
         drawBufferDouble_Optimized_Interlaced(true);
     }
@@ -1049,13 +1034,10 @@ int16_t main() {
 
         xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
         RIA.addr0 = KEYBOARD_INPUT;
-        RIA.step0 = 0;
+        RIA.step0 = 1;
 
         for (uint8_t i = 0; i < KEYBOARD_BYTES; i++) {
-            uint8_t j, new_keys;
-            RIA.addr0 = KEYBOARD_INPUT + i;
-            new_keys = RIA.rw0;
-            keystates[i] = new_keys;
+            keystates[i] = RIA.rw0;
         }
 
         if (!(keystates[0] & 1)) {

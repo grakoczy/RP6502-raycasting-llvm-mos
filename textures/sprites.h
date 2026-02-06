@@ -23,9 +23,21 @@ extern uint8_t sprColumnBuffer[16];
 inline void fetchSpriteColumn(uint8_t spriteNum, uint8_t spriteX) {
     RIA.addr0 = SPRITE_BASE + (spriteNum << 8) + spriteX;
     RIA.step0 = 16;
-    for (uint8_t i = 0; i < 16; ++i) {
-        sprColumnBuffer[i] = RIA.rw0;
-    }
+    sprColumnBuffer[0]  = RIA.rw0;
+    sprColumnBuffer[1]  = RIA.rw0;
+    sprColumnBuffer[2]  = RIA.rw0;
+    sprColumnBuffer[3]  = RIA.rw0;
+    sprColumnBuffer[4]  = RIA.rw0;
+    sprColumnBuffer[5]  = RIA.rw0;
+    sprColumnBuffer[6]  = RIA.rw0;
+    sprColumnBuffer[7]  = RIA.rw0;
+    sprColumnBuffer[8]  = RIA.rw0;
+    sprColumnBuffer[9]  = RIA.rw0;
+    sprColumnBuffer[10] = RIA.rw0;
+    sprColumnBuffer[11] = RIA.rw0;
+    sprColumnBuffer[12] = RIA.rw0;
+    sprColumnBuffer[13] = RIA.rw0;
+    sprColumnBuffer[14] = RIA.rw0;
+    sprColumnBuffer[15] = RIA.rw0;
 }
-
 #endif // SPRITE_DATA_H
