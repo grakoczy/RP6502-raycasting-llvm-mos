@@ -87,7 +87,8 @@ def conv_sprite_bpp16(name_in, size, name_out):
 # Example usage (you can add this to the bottom or call from another script)
 if __name__ == "__main__":
     # For backgrounds (no transparency needed)
-    conv_image("steampunk_control_panel_320x180.png", 320, 180, "background-320x180.bin")
+    # conv_image("steampunk_control_panel_320x180.png", 320, 180, "background-320x180.bin")
+    conv_image("fallout_background_320x180.png", 320, 180, "background-320x180.bin")
     
     # For sprites (WITH transparency support)
     conv_sprite_bpp16("needle-32x32.png", 32, "needle-32x32.bin")

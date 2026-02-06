@@ -60,16 +60,16 @@ FpF16<7> cos_r(0.9807852804);
 
 // uint16_t startX = 151+mapWidth/2;
 // uint16_t startY = 137+mapHeight/2;
-uint16_t startX = 148;
-uint16_t startY = 134;
+uint16_t startX = 142;
+uint16_t startY = 145;
 
 uint16_t prevPlayerX, prevPlayerY;
 
 int8_t currentStep = 1;
 int8_t movementStep = 2; 
 
-uint8_t xOffset = 68;
-uint8_t yOffset = 3; 
+uint8_t xOffset = 56;
+uint8_t yOffset = 6; 
 
 uint16_t texSize = texWidth * texHeight -1;
 const uint8_t w = WINDOW_WIDTH;
@@ -177,8 +177,8 @@ FpF16<7> halfH(h / 2);
 #define NEEDLE_SIZE 32                  // pixel sprite
 #define LOG_NEEDLE_SIZE 5               // 2^5 = 32 (round up to power of 2)
 
-#define NEEDLE_CENTER_X 294
-#define NEEDLE_CENTER_Y 50
+#define NEEDLE_CENTER_X 292
+#define NEEDLE_CENTER_Y 29
 
 #define KEYBOARD_INPUT 0xFF10 
 #define KEYBOARD_BYTES 32

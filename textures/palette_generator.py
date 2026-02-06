@@ -3,7 +3,9 @@ import numpy as np
 from PIL import Image
 
 # Config
-IMAGE_FILES = ["steampunk_control_panel_320x180.png", 
+IMAGE_FILES = [
+                # "steampunk_control_panel_320x180.png", 
+                "fallout_background_320x180.png",
                 "greystone16x16.png",
                 "greystone16x16dark.png",
                 "redbrick_16x16.png",
