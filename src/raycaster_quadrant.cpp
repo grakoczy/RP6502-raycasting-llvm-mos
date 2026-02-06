@@ -54,14 +54,14 @@ FpF16<7> planeY(0.0);
 FpF16<7> moveSpeed(0.2); 
 FpF16<7> playerScale(5);
 
-// sin(pi/24) and cos(pi/24) for 7.5 degree steps
+// sin(pi/16) and cos(pi/16) for 11.25 degree steps
 FpF16<7> sin_r(0.19509032201); 
 FpF16<7> cos_r(0.9807852804); 
 
 // uint16_t startX = 151+mapWidth/2;
 // uint16_t startY = 137+mapHeight/2;
-uint16_t startX = 142;
-uint16_t startY = 145;
+uint16_t startX = 285;
+uint16_t startY = 94;
 
 uint16_t prevPlayerX, prevPlayerY;
 
@@ -141,29 +141,29 @@ uint8_t texColumnBuffer[16];
 uint8_t sprColumnBuffer[16]; // Buffer for sprite column data
 
 // values for sprite rotation
-static const int16_t sin_fix8_48[] = {
-      0,  33,  66,  98, 128, 156, 181, 203, 222, 237, 247, 252,  // 0-82.5°
-    256, 252, 247, 237, 222, 203, 181, 156, 128,  98,  66,  33,  // 90-172.5°
-      0, -33, -66, -98,-128,-156,-181,-203,-222,-237,-247,-252,  // 180-262.5°
-   -256,-252,-247,-237,-222,-203,-181,-156,-128, -98, -66, -33,  // 270-352.5°
-      0
+static const int16_t sin_fix8_32[] = {
+       0,   50,   98,  142,  181,  213,  237,  251,
+     256,  251,  237,  213,  181,  142,   98,   50,
+       0,  -50,  -98, -142, -181, -213, -237, -251,
+    -256, -251, -237, -213, -181, -142,  -98,  -50,
+       0
 };
 
-static const int16_t cos_fix8_48[] = {
-    256, 252, 247, 237, 222, 203, 181, 156, 128,  98,  66,  33,  // 0-82.5°
-      0, -33, -66, -98,-128,-156,-181,-203,-222,-237,-247,-252,  // 90-172.5°
-   -256,-252,-247,-237,-222,-203,-181,-156,-128, -98, -66, -33,  // 180-262.5°
-      0,  33,  66,  98, 128, 156, 181, 203, 222, 237, 247, 252,  // 270-352.5°
-    256
+static const int16_t cos_fix8_32[] = {
+     256,  251,  237,  213,  181,  142,   98,   50,
+       0,  -50,  -98, -142, -181, -213, -237, -251,
+    -256, -251, -237, -213, -181, -142,  -98,  -50,
+       0,   50,   98,  142,  181,  213,  237,  251,
+     256
 };
 
-// fix_8((1+(sin(theta_deg)-cos(theta_deg)))/2) for 48 steps
-static const int16_t t2_fix8_48[] = {
-      0,  19,  37,  56,  81, 103, 128, 150, 175, 196, 219, 237,  // 0-82.5°
-    256, 271, 285, 294, 303, 306, 309, 306, 303, 294, 285, 271,  // 90-172.5°
-    256, 237, 219, 196, 175, 150, 128, 103,  81,  56,  37,  19,  // 180-262.5°
-      0, -15, -29, -38, -47, -50, -53, -50, -47, -38, -29, -15,  // 270-352.5°
-      0
+// fix_8((1+(sin(theta_deg)-cos(theta_deg)))/2) for 32 steps
+static const int16_t t2_fix8_32[] = {
+       0,   27,   59,   93,  128,  163,  197,  229,
+     256,  279,  295,  306,  309,  306,  295,  279,
+     256,  229,  197,  163,  128,   93,   59,   27,
+       0,  -23,  -39,  -50,  -53,  -50,  -39,  -23,
+       0
 };
 
 uint8_t currentRotStep = 0; 
@@ -600,7 +600,7 @@ void renderSprites() {
                     // Masking with 0xF is faster than checking bounds, assuming 16x16
                     uint8_t color = sprColumnBuffer[(texYPos >> 16) & 0x0F];
                     
-                    if (color != 49) { // Treat color 49 as transparent
+                    if (color != 0x21) { // Treat color 0x21 as transparent
                         *pixelPtr = color;
                     }
                     pixelPtr += w;
@@ -820,7 +820,7 @@ void draw_map() {
         if (worldMap[i][j] > 0) {
           switch(worldMap[i][j])
           {
-            case 1: color = 37; break; 
+            case 1: color = 66; break; 
             case 2: color = RED; break; 
             case 3: color = BLUE; break; 
             case 4: color = WHITE; break; 
@@ -871,18 +871,18 @@ void draw_map() {
 
 void draw_needle() {
 
-    // Map currentRotStep (0-47) to table index
-    uint8_t i = (48 - currentRotStep) % 48;
+    // Map currentRotStep (0-31) to table index
+    uint8_t i = (32 - currentRotStep) % 32;
     
     uint16_t ptr = NEEDLE_CONFIG_ADDR;
     
     // Update only the transform matrix (rotation)
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_48[i]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_48[i]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_48[i]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_48[i]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_48[i]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_48[48-i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_32[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_32[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_32[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_32[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_32[i]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_32[32-i]);
     
 }
 
@@ -926,12 +926,12 @@ void init_needle_sprite() {
     int16_t needle_y = (NEEDLE_CENTER_Y - NEEDLE_SIZE/2);
     
     // Set initial rotation (0 degrees = pointing up)
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_48[0]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_48[0]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_48[0]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_48[0]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_48[0]);
-    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_48[48-0-1]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[0], cos_fix8_32[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[1], -sin_fix8_32[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[2], NEEDLE_SIZE * t2_fix8_32[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[3], sin_fix8_32[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[4], cos_fix8_32[0]);
+    xram0_struct_set(ptr, vga_mode4_asprite_t, transform[5], NEEDLE_SIZE * t2_fix8_32[32]);
     
     // Set position (centered) - use variables to avoid macro warnings
     xram0_struct_set(ptr, vga_mode4_asprite_t, x_pos_px, needle_x);
@@ -999,9 +999,10 @@ int16_t main() {
     uint8_t timer = 0;
 
     for(int i = 0; i < h / 2; i++) {
-        uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
+        // uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
+        uint8_t sky_idx = mapValue(i, 0, h / 2, 30, 20);
         ceilingColors[i] = sky_idx;
-        uint8_t floor_idx = mapValue(i, 0, h / 2, 32, 47); 
+        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 28); 
         floorColors[i + (h / 2)] = floor_idx;
     }
 

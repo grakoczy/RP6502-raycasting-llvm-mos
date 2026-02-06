@@ -6,8 +6,10 @@ from PIL import Image
 IMAGE_FILES = [
                 # "steampunk_control_panel_320x180.png", 
                 "fallout_background_320x180.png",
-                "greystone16x16.png",
-                "greystone16x16dark.png",
+                "concrete_16x16.png",
+                "concrete_16x16dark.png",
+                # "greystone16x16.png",
+                # "greystone16x16dark.png",
                 "redbrick_16x16.png",
                 "redbrick_16x16dark.png",
                 "barrel_16x16.png",
@@ -15,9 +17,10 @@ IMAGE_FILES = [
                 "apple_16x16.png"
 ]
 ANSI_COUNT = 16
-SKY_COUNT = 16
+# SKY_COUNT = 16
 GRAY_COUNT = 16
-IMAGE_COUNT = 256 - ANSI_COUNT - SKY_COUNT - GRAY_COUNT # 208 colors left
+# IMAGE_COUNT = 256 - ANSI_COUNT - SKY_COUNT - GRAY_COUNT # 208 colors left
+IMAGE_COUNT = 256 - ANSI_COUNT - GRAY_COUNT # 208 colors left
 
 def generate_palette():
     palette = []
@@ -30,14 +33,14 @@ def generate_palette():
         (0, 0, 255),     (255, 0, 255),   (0, 255, 255),   (255, 255, 255)
     ])
 
-    # 2. Sky Gradient (Indices 16-31)
-    for i in range(SKY_COUNT):
-        r = int(0 + (135 - 0) * (i / (SKY_COUNT - 1)))
-        g = int(20 + (206 - 20) * (i / (SKY_COUNT - 1)))
-        b = int(60 + (250 - 60) * (i / (SKY_COUNT - 1)))
-        palette.append((r, g, b))
+    # # 2. Sky Gradient (Indices 16-31)
+    # for i in range(SKY_COUNT):
+    #     r = int(0 + (135 - 0) * (i / (SKY_COUNT - 1)))
+    #     g = int(20 + (206 - 20) * (i / (SKY_COUNT - 1)))
+    #     b = int(60 + (250 - 60) * (i / (SKY_COUNT - 1)))
+    #     palette.append((r, g, b))
 
-    # 3. Gray Gradient (Indices 32-63)
+    # 3. Gray Gradient (Indices 16-31)
     for i in range(GRAY_COUNT):
         v = int(255 * i / (GRAY_COUNT - 1))
         palette.append((v, v, v))
@@ -72,4 +75,5 @@ def write_header(pal):
 
 if __name__ == "__main__":
     write_header(generate_palette())
-    print("palette.h generated: 0-15 ANSI, 16-31 Sky, 32-63 Gray, 64-255 Images")
+    # print("palette.h generated: 0-15 ANSI, 16-31 Sky, 32-63 Gray, 64-255 Images")
+    print("palette.h generated: 0-15 ANSI, 16-31 Gray, 32-255 Images")
