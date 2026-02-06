@@ -16,8 +16,8 @@ IMAGE_FILES = [
 ]
 ANSI_COUNT = 16
 SKY_COUNT = 16
-GRAY_COUNT = 32
-IMAGE_COUNT = 256 - ANSI_COUNT - SKY_COUNT - GRAY_COUNT # 192 colors left
+GRAY_COUNT = 16
+IMAGE_COUNT = 256 - ANSI_COUNT - SKY_COUNT - GRAY_COUNT # 208 colors left
 
 def generate_palette():
     palette = []

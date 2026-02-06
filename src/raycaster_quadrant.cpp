@@ -299,6 +299,37 @@ void fillBuffer(uint8_t color) {
         buffer_ptr_loc += w; 
     }
 }
+
+static void draw_7segment_digit(uint16_t color, int8_t digit, uint16_t x, uint16_t y) {
+    static const uint8_t segments[] = {
+        0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+    };
+    if (digit < 0 || digit > 9) return;
+    uint8_t mask = segments[digit];
+
+    fill_rect_fast(BLACK, x, y, 6, 10); // Clear digit area
+
+    auto draw_seg = [&](uint16_t sx, uint16_t sy, uint16_t slen, bool horizontal) {
+        if (horizontal) draw_hline(color, sx, sy, slen);
+        else draw_vline(color, sx, sy, slen);
+    };
+
+    if (mask & 0x01) draw_seg(x + 1, y, 4, true);      // a
+    if (mask & 0x02) draw_seg(x + 5, y + 1, 3, false); // b
+    if (mask & 0x04) draw_seg(x + 5, y + 5, 4, false); // c
+    if (mask & 0x08) draw_seg(x + 1, y + 9, 4, true);  // d
+    if (mask & 0x10) draw_seg(x, y + 5, 4, false);     // e
+    if (mask & 0x20) draw_seg(x, y + 1, 3, false);     // f
+    if (mask & 0x40) draw_seg(x + 1, y + 4, 4, true);     // g
+}
+
+void draw_7segment_double(uint16_t color, int8_t number, uint16_t x, uint16_t y) {
+    if (number < 0) number = 0;
+    if (number > 99) number = 99;
+    draw_7segment_digit(color, number / 10, x, y);
+    draw_7segment_digit(color, number % 10, x + 7, y);
+}
+
 void precalculateRotations() {
     FpF16<7> currentDirX = dirX;
     FpF16<7> currentDirY = dirY;
@@ -569,7 +600,7 @@ void renderSprites() {
                     // Masking with 0xF is faster than checking bounds, assuming 16x16
                     uint8_t color = sprColumnBuffer[(texYPos >> 16) & 0x0F];
                     
-                    if (color != 65) { // Treat color 65 as transparent
+                    if (color != 49) { // Treat color 49 as transparent
                         *pixelPtr = color;
                     }
                     pixelPtr += w;
@@ -864,6 +895,9 @@ void draw_player(){
     
     fill_rect_fast(DARK_GREEN, prevPlayerX, prevPlayerY, 2, 2);
     fill_rect_fast(YELLOW, x, y, 2, 2);
+
+    draw_7segment_double(GREEN, (int16_t)(posX), 270, 68);
+    draw_7segment_double(GREEN, (int16_t)(posY), 295, 68);
     prevPlayerX = x;
     prevPlayerY = y;
 }
@@ -967,7 +1001,7 @@ int16_t main() {
     for(int i = 0; i < h / 2; i++) {
         uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
         ceilingColors[i] = sky_idx;
-        uint8_t floor_idx = mapValue(i, 0, h / 2, 32, 63); 
+        uint8_t floor_idx = mapValue(i, 0, h / 2, 32, 47); 
         floorColors[i + (h / 2)] = floor_idx;
     }
 
