@@ -42,8 +42,8 @@ using namespace mn::MFixedPoint;
 #define WINDOW_WIDTH 96
 #define WINDOW_HEIGTH 64
 
-#define ROTATION_STEPS 48
-#define QUADRANT_STEPS 12 
+#define ROTATION_STEPS 32
+#define QUADRANT_STEPS 8 
 
 FpF16<7> posX(9);
 FpF16<7> posY(11);
@@ -55,8 +55,8 @@ FpF16<7> moveSpeed(0.2);
 FpF16<7> playerScale(5);
 
 // sin(pi/24) and cos(pi/24) for 7.5 degree steps
-FpF16<7> sin_r(0.130526192); 
-FpF16<7> cos_r(0.991444861); 
+FpF16<7> sin_r(0.19509032201); 
+FpF16<7> cos_r(0.9807852804); 
 
 // uint16_t startX = 151+mapWidth/2;
 // uint16_t startY = 137+mapHeight/2;
