@@ -3,7 +3,15 @@ import numpy as np
 from PIL import Image
 
 # Config
-IMAGE_FILES = ["steampunk_control_panel_320x180.png", "greystone32x32.png", "greystone32x32dark.png", "redbrick32x32.png", "redbrick32x32dark.png", "needle32x32.png", "barrel_16x16.png"]
+IMAGE_FILES = ["steampunk_control_panel_320x180.png", 
+                "greystone16x16.png",
+                "greystone16x16dark.png",
+                "redbrick_16x16.png",
+                "redbrick_16x16dark.png",
+                "barrel_16x16.png",
+                "bomb_16x16.png",
+                "apple_16x16.png"
+]
 ANSI_COUNT = 16
 SKY_COUNT = 16
 GRAY_COUNT = 32

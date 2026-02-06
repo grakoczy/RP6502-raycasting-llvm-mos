@@ -18,7 +18,7 @@ inline uint8_t getTexturePixel(uint8_t texNum, uint16_t offset) {
     return RIA.rw0;
 }
 
-// Optimized function to fetch entire texture column (unrolled for 6502 speed)
+// Optimized function to fetch entire texture column
 extern uint8_t texColumnBuffer[16];
 inline void fetchTextureColumn(uint8_t texNum, uint8_t texX) {
     RIA.addr0 = TEXTURE_BASE + (texNum << 8) + texX;

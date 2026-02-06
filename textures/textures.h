@@ -23,9 +23,22 @@ extern uint8_t texColumnBuffer[16];
 inline void fetchTextureColumn(uint8_t texNum, uint8_t texX) {
     RIA.addr0 = TEXTURE_BASE + (texNum << 8) + texX;
     RIA.step0 = 16;
-    for (uint8_t i = 0; i < 16; ++i) {
-        texColumnBuffer[i] = RIA.rw0;
-    }
+    texColumnBuffer[0]  = RIA.rw0;
+    texColumnBuffer[1]  = RIA.rw0;
+    texColumnBuffer[2]  = RIA.rw0;
+    texColumnBuffer[3]  = RIA.rw0;
+    texColumnBuffer[4]  = RIA.rw0;
+    texColumnBuffer[5]  = RIA.rw0;
+    texColumnBuffer[6]  = RIA.rw0;
+    texColumnBuffer[7]  = RIA.rw0;
+    texColumnBuffer[8]  = RIA.rw0;
+    texColumnBuffer[9]  = RIA.rw0;
+    texColumnBuffer[10] = RIA.rw0;
+    texColumnBuffer[11] = RIA.rw0;
+    texColumnBuffer[12] = RIA.rw0;
+    texColumnBuffer[13] = RIA.rw0;
+    texColumnBuffer[14] = RIA.rw0;
+    texColumnBuffer[15] = RIA.rw0;
 }
 
 #endif // TEXTURE_DATA_H
