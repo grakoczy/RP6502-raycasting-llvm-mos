@@ -774,17 +774,18 @@ int raycastF() {
     renderSprites();
     
     // Draw buffer to screen — use interlaced during movement to halve XRAM I/O
-    if (bigMode) {
-        // if (currentStep >= 2) {
-        //     // Interlaced: write only even or odd rows (halves XRAM writes)
-        //     static bool oddField = false;
-        //     drawBufferDouble_Optimized_Interlaced(oddField);
-        //     oddField = !oddField;
-        // } else {
+    if (!bigMode) {
+        if (currentStep >= 2) {
+            // Interlaced: write only even or odd rows (halves XRAM writes)
+            static bool oddField = false;
+            drawBufferDouble_Optimized_Interlaced(oddField);
+            oddField = !oddField;
+        } else {
             drawBufferDouble_Optimized();
-        // }
+        }
     } else {
-        drawBufferDouble_Optimized_Interlaced(true);
+        // drawBufferDouble_Optimized_Interlaced(true);
+        drawBufferDouble_Optimized();
     }
     
     return 0;
