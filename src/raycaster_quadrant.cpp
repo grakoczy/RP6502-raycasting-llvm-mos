@@ -39,8 +39,8 @@ using namespace mn::MFixedPoint;
 
 #define SCREEN_WIDTH 320 
 #define SCREEN_HEIGHT 180 
-#define WINDOW_WIDTH 96
-#define WINDOW_HEIGTH 64
+#define MAX_WINDOW_WIDTH 96
+#define MAX_WINDOW_HEIGHT 64
 
 #define ROTATION_STEPS 32
 #define QUADRANT_STEPS 8 
@@ -68,23 +68,24 @@ uint16_t prevPlayerX, prevPlayerY;
 int8_t currentStep = 1;
 int8_t movementStep = 2; 
 
+uint8_t w = MAX_WINDOW_WIDTH;
+uint8_t h = MAX_WINDOW_HEIGHT; 
+
 uint8_t xOffset = 56;
 uint8_t yOffset = 6; 
 
 uint16_t texSize = texWidth * texHeight -1;
-const uint8_t w = WINDOW_WIDTH;
-const uint8_t h = WINDOW_HEIGTH; 
 bool bigMode = true;
 
 // Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
 const uint8_t texRepeat = 4;
 
-uint8_t buffer[WINDOW_HEIGTH * WINDOW_WIDTH];
-uint8_t floorColors[WINDOW_HEIGTH];
-uint8_t ceilingColors[WINDOW_HEIGTH];
+uint8_t buffer[MAX_WINDOW_HEIGHT * MAX_WINDOW_WIDTH];
+uint8_t floorColors[MAX_WINDOW_HEIGHT];
+uint8_t ceilingColors[MAX_WINDOW_HEIGHT];
 
 // ZBuffer for sprite depth testing (stores perpendicular wall distance per stripe)
-int16_t ZBuffer[WINDOW_WIDTH];
+int16_t ZBuffer[MAX_WINDOW_WIDTH];
 
 // Sprite structure
 struct Sprite {
@@ -117,16 +118,16 @@ FpF16<7> texStepValues[256];
 
 // --- OPTIMIZATION: Cached Tables ---
 // Q1 Positive (Standard)
-FpF16<7> rayDirX_Q1[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> rayDirY_Q1[QUADRANT_STEPS][WINDOW_WIDTH];
+FpF16<7> rayDirX_Q1[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
+FpF16<7> rayDirY_Q1[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
 
 // Q1 Negative (Pre-calculated negation to avoid runtime math/copying)
-FpF16<7> rayDirX_Q1_Neg[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> rayDirY_Q1_Neg[QUADRANT_STEPS][WINDOW_WIDTH];
+FpF16<7> rayDirX_Q1_Neg[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
+FpF16<7> rayDirY_Q1_Neg[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
 
 // Delta Dists for Q0 only (Q1 swaps X/Y, Q2 reuses Q0, Q3 reuses Q1 swap)
-FpF16<7> deltaDistX_Q0[QUADRANT_STEPS][WINDOW_WIDTH];
-FpF16<7> deltaDistY_Q0[QUADRANT_STEPS][WINDOW_WIDTH];
+FpF16<7> deltaDistX_Q0[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
+FpF16<7> deltaDistY_Q0[QUADRANT_STEPS][MAX_WINDOW_WIDTH];
 
 // These point to the correct row in the tables above
 FpF16<7>* activeRayDirX;
@@ -134,7 +135,7 @@ FpF16<7>* activeRayDirY;
 FpF16<7>* activeDeltaDistX;
 FpF16<7>* activeDeltaDistY;
 
-FpF16<7> cameraXValues[WINDOW_WIDTH];
+FpF16<7> cameraXValues[MAX_WINDOW_WIDTH];
 
 int16_t texOffsetTable[256]; 
 uint8_t texColumnBuffer[16]; 
@@ -991,6 +992,39 @@ void placeSprites() {
     }
 }
 
+void updateWindowSize(int8_t new_w) {
+    if (new_w < 64) new_w = 64;
+    if (new_w > MAX_WINDOW_WIDTH) new_w = MAX_WINDOW_WIDTH;
+    
+    // Align to 8 pixels for unrolled loops
+    new_w = new_w & ~7;
+    
+    if (new_w == w) return;
+    
+    // Clear old window area
+    fillBuffer(BLACK);
+    
+    w = new_w;
+    h = (w * 2) / 3;
+    
+    xOffset = ((SCREEN_WIDTH - w * 2) / 2) - 8;
+    yOffset = ((SCREEN_HEIGHT - h * 2) / 2) - 20;
+    
+    // Recalculate tables
+    precalculateRotations();
+    precalculateLineHeights();
+
+    // Recalculate sky/floor colors for the new height
+    for(int i = 0; i < h / 2; i++) {
+        uint8_t sky_idx = mapValue(i, 0, h / 2, 30, 20);
+        ceilingColors[i] = sky_idx;
+        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 28); 
+        floorColors[i + (h / 2)] = floor_idx;
+    }
+    
+    gamestate = GAMESTATE_MOVING;
+}
+
 int16_t main() {
     bool handled_key = false;
     bool paused = false;
@@ -1080,6 +1114,15 @@ int16_t main() {
                 if (key(KEY_SPACE)) {
                     paused = !paused;
                 }
+
+                // Window Resizing
+                if (key(KEY_EQUAL) || key(KEY_KPPLUS)) { 
+                    updateWindowSize(w + 8);
+                }
+                if (key(KEY_MINUS) || key(KEY_KPMINUS)) {
+                    updateWindowSize(w - 8);
+                }
+
                 uint8_t rotateStep = 1;
                 if (key(KEY_LEFTSHIFT) || key(KEY_RIGHTSHIFT)) {
                     rotateStep = 2;
