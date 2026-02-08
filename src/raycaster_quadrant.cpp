@@ -1002,7 +1002,7 @@ void updateWindowSize(int8_t new_w) {
     if (new_w == w) return;
     
     // Clear old window area
-    fillBuffer(BLACK);
+    fillBuffer(18);
     
     w = new_w;
     h = (w * 2) / 3;
