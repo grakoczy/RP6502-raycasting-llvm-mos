@@ -65,6 +65,13 @@ uint16_t startY = 94;
 
 uint16_t prevPlayerX, prevPlayerY;
 
+const uint8_t SCAN_FRAMES = 20;
+const uint8_t SCAN_DECAY_MAX = 2 * SCAN_FRAMES;
+bool scan_active = false;
+uint8_t scan_frame = 0;
+uint8_t scan_decay[mapHeight][mapWidth];
+bool map_visible = false;
+
 int8_t currentStep = 1;
 int8_t movementStep = 2; 
 
@@ -815,37 +822,64 @@ void draw_ui() {
 
 void draw_map() {
 #if TILE_SIZE == 1
+    uint8_t playerTileX = (uint8_t)(int)posX;
+    uint8_t playerTileY = (uint8_t)(int)posY;
+    uint16_t radius2 = 0;
+    uint16_t prevRadius2 = 0;
+    if (scan_active) {
+        uint8_t maxDx = playerTileX;
+        uint8_t maxDx2 = (mapWidth - 1) - playerTileX;
+        if (maxDx2 > maxDx) maxDx = maxDx2;
+
+        uint8_t maxDy = playerTileY;
+        uint8_t maxDy2 = (mapHeight - 1) - playerTileY;
+        if (maxDy2 > maxDy) maxDy = maxDy2;
+
+        uint16_t maxDist2 = (uint16_t)maxDx * (uint16_t)maxDx + (uint16_t)maxDy * (uint16_t)maxDy;
+        if (maxDist2 == 0) maxDist2 = 1;
+
+        radius2 = (uint16_t)(((uint32_t)scan_frame * maxDist2) / (SCAN_FRAMES - 1));
+        if (scan_frame > 0) {
+            prevRadius2 = (uint16_t)(((uint32_t)(scan_frame - 1) * maxDist2) / (SCAN_FRAMES - 1));
+        }
+    }
+
     // Scaled to 2x2 pixels for visibility
     for (int i = 0; i < mapHeight; i++) {
       for (int j = 0; j < mapWidth; j++) {
-        uint8_t color;
+        uint8_t color = DARK_GREEN;
         if (worldMap[i][j] > 0) {
-          switch(worldMap[i][j])
-          {
-            case 1: color = 66; break; 
-            case 2: color = RED; break; 
-            case 3: color = BLUE; break; 
-            case 4: color = WHITE; break; 
-            case 5: color = YELLOW; break; 
-            default: color = 37; break;
-          }
-        } else {
-            color = DARK_GREEN;
+            bool wave_hit = false;
+            if (scan_active) {
+                uint8_t dx = (j > playerTileX) ? (uint8_t)(j - playerTileX) : (uint8_t)(playerTileX - j);
+                uint8_t dy = (i > playerTileY) ? (uint8_t)(i - playerTileY) : (uint8_t)(playerTileY - i);
+                uint16_t dist2 = (uint16_t)dx * (uint16_t)dx + (uint16_t)dy * (uint16_t)dy;
+                if (dist2 >= prevRadius2 && dist2 <= radius2) {
+                    wave_hit = true;
+                }
+            }
+
+            if (wave_hit) {
+                scan_decay[i][j] = SCAN_DECAY_MAX;
+                color = WHITE;
+            } else if (scan_decay[i][j] > 0) {
+                color = mapValue(scan_decay[i][j], 1, SCAN_DECAY_MAX, 16, 32);
+            }
         }
         fill_rect_fast(color, j * 2 + startX, i * 2 + startY, 2, 2);
       }
     }
 
-    // Draw Sprites on map
-    for(int i = 0; i < numSprites; i++) {
-        int sX = (int)sprites[i].x;
-        int sY = (int)sprites[i].y;
-        
-        // Ensure within bounds
-        if (sX >= 0 && sX < mapWidth && sY >= 0 && sY < mapHeight) {
-             uint8_t color = 10 + sprites[i].texture;
-             draw_pixel(color, sX * 2 + startX, sY * 2 + startY);
-            //  fill_rect_fast(color, sX * 2 + startX, sY * 2 + startY, 2, 2);
+    if (scan_active) {
+        // Draw sprites only during active scan
+        for (int i = 0; i < numSprites; i++) {
+            int sX = (int)sprites[i].x;
+            int sY = (int)sprites[i].y;
+
+            if (sX >= 0 && sX < mapWidth && sY >= 0 && sY < mapHeight) {
+                uint8_t color = 10 + sprites[i].texture;
+                draw_pixel(color, sX * 2 + startX, sY * 2 + startY);
+            }
         }
     }
 #else
@@ -890,6 +924,9 @@ void draw_needle() {
 
 
 void draw_player(){
+    if (!map_visible) {
+        return;
+    }
     // Scale 2x for visibility
     FpF16<7> ts(2);
     uint16_t x = (int)(posX * ts) + startX;
@@ -907,7 +944,6 @@ void draw_player(){
 void handleCalculation() {
     gamestate = GAMESTATE_CALCULATING;
     draw_needle();
-    draw_player();
     raycastF();
     gamestate = GAMESTATE_IDLE;
 }
@@ -1032,6 +1068,8 @@ int16_t main() {
     uint8_t mode = 0;
     uint8_t i = 0;
     uint8_t timer = 0;
+    bool scan_key_latch = false;
+    bool map_visible_prev = false;
 
     for(int i = 0; i < h / 2; i++) {
         // uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
@@ -1084,8 +1122,6 @@ int16_t main() {
     xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, PALETTE_XRAM_ADDR);
 
     draw_ui();
-    draw_map();
-    draw_player();
     init_needle_sprite();
 
     handleCalculation();
@@ -1098,7 +1134,6 @@ int16_t main() {
 
         if (timer == 2 && currentStep > 1) { 
             currentStep = 1;
-            draw_map();
             handleCalculation();
         }
 
@@ -1111,9 +1146,12 @@ int16_t main() {
         }
 
         if (!(keystates[0] & 1)) {
-                if (key(KEY_SPACE)) {
-                    paused = !paused;
+                bool space_down = key(KEY_SPACE);
+                if (space_down && !scan_key_latch) {
+                    scan_active = true;
+                    scan_frame = 0;
                 }
+                scan_key_latch = space_down;
 
                 // Window Resizing
                 if (key(KEY_EQUAL) || key(KEY_KPPLUS)) { 
@@ -1187,6 +1225,34 @@ int16_t main() {
                     handleCalculation();
                 }
             }
+
+        bool any_decay = false;
+        for (uint8_t y = 0; y < mapHeight; y++) {
+            for (uint8_t x = 0; x < mapWidth; x++) {
+                if (scan_decay[y][x] > 0) {
+                    scan_decay[y][x]--;
+                    if (scan_decay[y][x] > 0) any_decay = true;
+                }
+            }
+        }
+
+        map_visible = scan_active || any_decay;
+        if (map_visible) {
+            draw_map();
+            draw_player();
+        } else if (map_visible_prev) {
+            draw_ui();
+        }
+        map_visible_prev = map_visible;
+
+        if (scan_active) {
+            if (scan_frame + 1 >= SCAN_FRAMES) {
+                scan_active = false;
+                scan_frame = 0;
+            } else {
+                scan_frame++;
+            }
+        }
     }
     return 0;
 }
