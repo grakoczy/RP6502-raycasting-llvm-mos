@@ -65,12 +65,13 @@ uint16_t startY = 94;
 
 uint16_t prevPlayerX, prevPlayerY;
 
-const uint8_t SCAN_FRAMES = 20;
-const uint8_t SCAN_DECAY_MAX = 2 * SCAN_FRAMES;
+const uint8_t SCAN_FRAMES = 120;
+const uint8_t SCAN_DECAY_MAX = 80;
 bool scan_active = false;
 uint8_t scan_frame = 0;
 uint8_t scan_decay[mapHeight][mapWidth];
 bool map_visible = false;
+uint8_t map_draw_distance = 3;
 
 int8_t currentStep = 1;
 int8_t movementStep = 2; 
@@ -104,6 +105,7 @@ struct Sprite {
 // Sprite definitions
 #define numSprites 10
 Sprite sprites[numSprites];
+uint8_t sprite_scan_decay[numSprites];
 
 bool gamestate_changed = true;
 uint8_t gamestate = 1;  
@@ -817,7 +819,7 @@ void print_map() {
 }
 
 void draw_ui() {
-  fill_rect_fast(DARK_GREEN, startX, startY, 32, 32);
+  fill_rect_fast(18, startX, startY, 32, 32);
 }
 
 void draw_map() {
@@ -826,6 +828,7 @@ void draw_map() {
     uint8_t playerTileY = (uint8_t)(int)posY;
     uint16_t radius2 = 0;
     uint16_t prevRadius2 = 0;
+    uint16_t drawDist2 = (uint16_t)map_draw_distance * (uint16_t)map_draw_distance;
     if (scan_active) {
         uint8_t maxDx = playerTileX;
         uint8_t maxDx2 = (mapWidth - 1) - playerTileX;
@@ -845,40 +848,61 @@ void draw_map() {
     }
 
     // Scaled to 2x2 pixels for visibility
-    for (int i = 0; i < mapHeight; i++) {
-      for (int j = 0; j < mapWidth; j++) {
-        uint8_t color = DARK_GREEN;
-        if (worldMap[i][j] > 0) {
-            bool wave_hit = false;
-            if (scan_active) {
+    for (uint8_t i = 0; i < mapHeight; i++) {
+        int8_t* mapRow = worldMap[i];
+        uint8_t* decayRow = scan_decay[i];
+        uint16_t py = (uint16_t)(i << 1) + startY;
+        for (uint8_t j = 0; j < mapWidth; j++) {
+            uint8_t color = 18;
+            int8_t cell = mapRow[j];
+            if (cell > 0) {
                 uint8_t dx = (j > playerTileX) ? (uint8_t)(j - playerTileX) : (uint8_t)(playerTileX - j);
                 uint8_t dy = (i > playerTileY) ? (uint8_t)(i - playerTileY) : (uint8_t)(playerTileY - i);
                 uint16_t dist2 = (uint16_t)dx * (uint16_t)dx + (uint16_t)dy * (uint16_t)dy;
-                if (dist2 >= prevRadius2 && dist2 <= radius2) {
-                    wave_hit = true;
+
+                if (scan_active) {
+                    if (dist2 >= prevRadius2 && dist2 <= radius2) {
+                        decayRow[j] = SCAN_DECAY_MAX;
+                        color = WHITE;
+                    } else if (decayRow[j] > 0) {
+                        if (cell == 1) {
+                            color = mapValue(decayRow[j], 1, SCAN_DECAY_MAX, 18, 28);
+                        } else {
+                            color = DARK_RED;
+                        }
+                    }
+                } else if (dist2 <= drawDist2) {
+                    color = 32;
                 }
             }
-
-            if (wave_hit) {
-                scan_decay[i][j] = SCAN_DECAY_MAX;
-                color = WHITE;
-            } else if (scan_decay[i][j] > 0) {
-                color = mapValue(scan_decay[i][j], 1, SCAN_DECAY_MAX, 16, 32);
-            }
+            uint16_t px = (uint16_t)(j << 1) + startX;
+            fill_rect_fast(color, px, py, 2, 2);
         }
-        fill_rect_fast(color, j * 2 + startX, i * 2 + startY, 2, 2);
-      }
     }
 
     if (scan_active) {
         // Draw sprites only during active scan
-        for (int i = 0; i < numSprites; i++) {
-            int sX = (int)sprites[i].x;
-            int sY = (int)sprites[i].y;
+        for (uint8_t i = 0; i < numSprites; i++) {
+            Sprite* spr = &sprites[i];
+            uint8_t* decay = &sprite_scan_decay[i];
+            int8_t sX = (int8_t)(int)spr->x;
+            int8_t sY = (int8_t)(int)spr->y;
 
             if (sX >= 0 && sX < mapWidth && sY >= 0 && sY < mapHeight) {
-                uint8_t color = 10 + sprites[i].texture;
-                draw_pixel(color, sX * 2 + startX, sY * 2 + startY);
+                uint8_t usX = (uint8_t)sX;
+                uint8_t usY = (uint8_t)sY;
+                uint8_t dx = (usX > playerTileX) ? (uint8_t)(usX - playerTileX) : (uint8_t)(playerTileX - usX);
+                uint8_t dy = (usY > playerTileY) ? (uint8_t)(usY - playerTileY) : (uint8_t)(playerTileY - usY);
+                uint16_t dist2 = (uint16_t)dx * (uint16_t)dx + (uint16_t)dy * (uint16_t)dy;
+
+                if (dist2 >= prevRadius2 && dist2 <= radius2) {
+                    *decay = SCAN_DECAY_MAX;
+                }
+
+                if (*decay > 0 && *decay < SCAN_DECAY_MAX) {
+                    uint8_t color = 10 + spr->texture;
+                    draw_pixel(color, (uint16_t)(usX << 1) + startX, (uint16_t)(usY << 1) + startY);
+                }
             }
         }
     }
@@ -1235,18 +1259,19 @@ int16_t main() {
                 }
             }
         }
-
-        map_visible = scan_active || any_decay;
-        if (map_visible) {
-            draw_map();
-            draw_player();
-        } else if (map_visible_prev) {
-            draw_ui();
+        for (uint8_t i = 0; i < numSprites; i++) {
+            if (sprite_scan_decay[i] > 0) {
+                sprite_scan_decay[i]--;
+            }
         }
+
+        map_visible = true;
+        draw_map();
+        draw_player();
         map_visible_prev = map_visible;
 
         if (scan_active) {
-            if (scan_frame + 1 >= SCAN_FRAMES) {
+            if (scan_frame + 1 >= SCAN_FRAMES + SCAN_DECAY_MAX) {
                 scan_active = false;
                 scan_frame = 0;
             } else {
