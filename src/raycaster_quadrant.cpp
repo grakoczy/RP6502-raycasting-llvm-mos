@@ -229,6 +229,81 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
+static uint16_t isqrt16(uint16_t value) {
+    uint16_t result = 0;
+    uint16_t bit = 1u << 14;
+
+    while (bit > value) {
+        bit >>= 2;
+    }
+
+    while (bit != 0) {
+        if (value >= result + bit) {
+            value -= result + bit;
+            result = (result >> 1) + bit;
+        } else {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+
+    return result;
+}
+
+static void draw_scan_line() {
+    if (!scan_active) return;
+
+    uint8_t playerTileX = (uint8_t)(int)posX;
+    uint8_t playerTileY = (uint8_t)(int)posY;
+
+    uint8_t maxDx = playerTileX;
+    uint8_t maxDx2 = (mapWidth - 1) - playerTileX;
+    if (maxDx2 > maxDx) maxDx = maxDx2;
+
+    uint8_t maxDy = playerTileY;
+    uint8_t maxDy2 = (mapHeight - 1) - playerTileY;
+    if (maxDy2 > maxDy) maxDy = maxDy2;
+
+    uint16_t maxDist2 = (uint16_t)maxDx * (uint16_t)maxDx + (uint16_t)maxDy * (uint16_t)maxDy;
+    if (maxDist2 == 0) maxDist2 = 1;
+
+    uint16_t radius2 = (uint16_t)(((uint32_t)scan_frame * maxDist2) / (SCAN_FRAMES - 1));
+    uint16_t scanDist = isqrt16(radius2);
+    uint16_t scanDistRaw = (uint16_t)(scanDist << 7);
+    if (scanDistRaw == 0) scanDistRaw = 1;
+
+    uint16_t lineHeight;
+    if (scanDistRaw < 1024) {
+        lineHeight = lineHeightTable[scanDistRaw];
+    } else {
+        lineHeight = (scanDistRaw > 0) ?
+            (int)(FpF16<7>(h) / FpF16<7>::FromRaw(scanDistRaw)) : h;
+        if (lineHeight > 255) lineHeight = 255;
+    }
+
+    int16_t drawStart = (-((int16_t)lineHeight) >> 1) + (h >> 1);
+    int16_t drawEnd = drawStart + lineHeight;
+    int16_t y = drawEnd;
+    if (y < 0) return;
+    if (y >= h) y = h - 1;
+
+    uint8_t decay = SCAN_DECAY_MAX;
+    if (scan_frame >= SCAN_FRAMES) {
+        uint16_t remaining = (uint16_t)(SCAN_FRAMES + SCAN_DECAY_MAX - scan_frame);
+        decay = (remaining > SCAN_DECAY_MAX) ? SCAN_DECAY_MAX : (uint8_t)remaining;
+        if (decay == 0) return;
+    }
+
+    uint8_t color = (decay == SCAN_DECAY_MAX) ? WHITE : mapValue(decay, 1, SCAN_DECAY_MAX, 18, 28);
+    uint8_t* rowPtr = &buffer[(uint16_t)y * w];
+
+    for (uint8_t x = 0; x < w; ++x) {
+        if (scanDistRaw < ZBuffer[x]) {
+            rowPtr[x] = color;
+        }
+    }
+}
+
 void drawBufferDouble_Optimized() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     uint8_t* buffer_ptr_loc = buffer;
@@ -779,6 +854,8 @@ int raycastF() {
             }
         }
     }
+
+    // draw_scan_line();
     
     // Render sprites to buffer after walls but before drawing to screen
     renderSprites();
@@ -1160,16 +1237,17 @@ int16_t main() {
             currentStep = 1;
             handleCalculation();
         }
+        if (!scan_active) {
 
-        xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
-        RIA.addr0 = KEYBOARD_INPUT;
-        RIA.step0 = 1;
+            xregn( 0, 0, 0, 1, KEYBOARD_INPUT);
+            RIA.addr0 = KEYBOARD_INPUT;
+            RIA.step0 = 1;
 
-        for (uint8_t i = 0; i < KEYBOARD_BYTES; i++) {
-            keystates[i] = RIA.rw0;
-        }
+            for (uint8_t i = 0; i < KEYBOARD_BYTES; i++) {
+                keystates[i] = RIA.rw0;
+            }
 
-        if (!(keystates[0] & 1)) {
+            if (!(keystates[0] & 1)) {
                 bool space_down = key(KEY_SPACE);
                 if (space_down && !scan_key_latch) {
                     scan_active = true;
@@ -1191,46 +1269,46 @@ int16_t main() {
                 }
 
                 if (key(KEY_RIGHT)){
-                  gamestate = GAMESTATE_MOVING;
-                  currentRotStep = (currentRotStep + rotateStep) % ROTATION_STEPS;
-                  updateRaycasterVectors();
+                    gamestate = GAMESTATE_MOVING;
+                    currentRotStep = (currentRotStep + rotateStep) % ROTATION_STEPS;
+                    updateRaycasterVectors();
                 }
                 if (key(KEY_LEFT)){
-                  gamestate = GAMESTATE_MOVING;
-                  currentRotStep = (currentRotStep - rotateStep + ROTATION_STEPS) % ROTATION_STEPS;
-                  updateRaycasterVectors();
+                    gamestate = GAMESTATE_MOVING;
+                    currentRotStep = (currentRotStep - rotateStep + ROTATION_STEPS) % ROTATION_STEPS;
+                    updateRaycasterVectors();
                 }
                 if (key(KEY_UP)) {
-                  gamestate = GAMESTATE_MOVING;
-                  if(worldMap[int(posY)][int(posX + (dirX * moveSpeed) * playerScale)] == false) posX += (dirX * moveSpeed);
-                  if(worldMap[int(posY + (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY +=  (dirY * moveSpeed);
+                    gamestate = GAMESTATE_MOVING;
+                    if(worldMap[int(posY)][int(posX + (dirX * moveSpeed) * playerScale)] == false) posX += (dirX * moveSpeed);
+                    if(worldMap[int(posY + (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY +=  (dirY * moveSpeed);
                 }
                 if (key(KEY_DOWN)) {
-                  gamestate = GAMESTATE_MOVING;
-                  if(worldMap[int(posY)][int(posX - (dirX * moveSpeed) * playerScale)] == false) posX -= (dirX * moveSpeed);
-                  if(worldMap[int(posY - (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY -= (dirY * moveSpeed);
+                    gamestate = GAMESTATE_MOVING;
+                    if(worldMap[int(posY)][int(posX - (dirX * moveSpeed) * playerScale)] == false) posX -= (dirX * moveSpeed);
+                    if(worldMap[int(posY - (dirY * moveSpeed) * playerScale)][int(posX)] == false) posY -= (dirY * moveSpeed);
                 }
                 // Strafe Right
                 if (key(KEY_D)) {
-                  gamestate = GAMESTATE_MOVING;
-                  // Perpendicular vector (rotate right 90 deg: x' = -y, y' = x)
-                  // But based on analysis: Right is (-dirY, dirX)
-                  FpF16<7> strafeX = -dirY;
-                  FpF16<7> strafeY = dirX;
-                  
-                  if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
-                  if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
+                    gamestate = GAMESTATE_MOVING;
+                    // Perpendicular vector (rotate right 90 deg: x' = -y, y' = x)
+                    // But based on analysis: Right is (-dirY, dirX)
+                    FpF16<7> strafeX = -dirY;
+                    FpF16<7> strafeY = dirX;
+
+                    if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
+                    if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
                 // Strafe Left
                 if (key(KEY_A)) {
-                  gamestate = GAMESTATE_MOVING;
-                  // Perpendicular vector (rotate left 90 deg)
-                  // Left is (dirY, -dirX)
-                  FpF16<7> strafeX = dirY;
-                  FpF16<7> strafeY = -dirX;
+                    gamestate = GAMESTATE_MOVING;
+                    // Perpendicular vector (rotate left 90 deg)
+                    // Left is (dirY, -dirX)
+                    FpF16<7> strafeX = dirY;
+                    FpF16<7> strafeY = -dirX;
 
-                  if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
-                  if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
+                    if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
+                    if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
                 if (key(KEY_M)) {
                     bigMode = !bigMode;
@@ -1241,6 +1319,7 @@ int16_t main() {
                     break;
                 }
                 handled_key = true;
+            }
 
                 if (!paused) {
                     if (gamestate == GAMESTATE_MOVING) {
@@ -1248,7 +1327,7 @@ int16_t main() {
                     }
                     handleCalculation();
                 }
-            }
+        }
 
         bool any_decay = false;
         for (uint8_t y = 0; y < mapHeight; y++) {
@@ -1278,6 +1357,11 @@ int16_t main() {
                 scan_frame++;
             }
         }
+
+        // if (scan_active && !paused && scan_frame % 4 == 0 && scan_frame <= SCAN_FRAMES / 4) {
+        //     currentStep = 2;
+        //     handleCalculation();
+        // }
     }
     return 0;
 }
