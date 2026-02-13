@@ -10,7 +10,9 @@ image_files = [
     "concrete_16x16.png",
     "concrete_16x16dark.png",
     "redbrick_16x16.png",
-    "redbrick_16x16dark.png"
+    "redbrick_16x16dark.png",
+    "floor_16x16.png",
+    "ceiling_16x16.png"
 ]
 
 def load_palette_from_h(filename="palette.h"):

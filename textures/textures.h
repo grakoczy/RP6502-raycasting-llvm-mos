@@ -6,7 +6,7 @@
 // Texture dimensions
 #define texWidth 16
 #define texHeight 16
-#define NUM_TEXTURES 4
+#define NUM_TEXTURES 6
 
 // Texture base address in XRAM (set this in CMakeLists.txt)
 #define TEXTURE_BASE 0x1E100

@@ -54,15 +54,32 @@ def generate_texture_from_image(image_path, size):
                 texture_data.append(closest_texture_color(r, g, b))
         return texture_data
 
-def save_textures_to_binary(file_name, textures, texture_size):
+def build_opacity_masks(texture, texture_size, transparent_index=0x21):
+    """Build per-column 16-bit opacity masks (bit y == 1 means opaque)."""
+    width, height = texture_size
+    masks = []
+    for x in range(width):
+        mask = 0
+        for y in range(height):
+            pixel = texture[y * width + x]
+            if pixel != transparent_index:
+                mask |= (1 << y)
+        masks.append(mask)
+    return masks
+
+def save_textures_to_binary(file_name, textures, opacity_masks, texture_size):
     """Save textures as a binary file."""
     width, height = texture_size
     num_textures = len(textures)
+    pixel_bytes = num_textures * width * height
+    metadata_bytes = num_textures * width * 2
     
     print(f"Creating binary texture file: {file_name}")
     print(f"  Texture size: {width}x{height}")
     print(f"  Number of textures: {num_textures}")
-    print(f"  Total size: {num_textures * width * height} bytes")
+    print(f"  Pixel data size: {pixel_bytes} bytes")
+    print(f"  Opacity metadata size: {metadata_bytes} bytes")
+    print(f"  Total size: {pixel_bytes + metadata_bytes} bytes")
     
     with open(file_name, 'wb') as f:
         # Write each texture sequentially
@@ -71,6 +88,12 @@ def save_textures_to_binary(file_name, textures, texture_size):
             # Convert to bytes and write
             texture_bytes = bytes(texture)
             f.write(texture_bytes)
+
+        # Write opacity masks per sprite/column (little-endian uint16)
+        for masks in opacity_masks:
+            for mask in masks:
+                f.write((mask & 0xFF).to_bytes(1, 'little'))
+                f.write(((mask >> 8) & 0xFF).to_bytes(1, 'little'))
     
     print(f"Binary texture file created successfully!")
 
@@ -86,7 +109,11 @@ def generate_header_constants(output_file, texture_size, num_textures):
     header_content += f"#define spriteHeight {height}\n"
     header_content += f"#define NUM_SPRITES {num_textures}\n\n"
     header_content += f"// Sprite base address in XRAM (set this in CMakeLists.txt)\n"
-    header_content += f"#define SPRITE_BASE 0x1E500\n\n"
+    header_content += f"#define SPRITE_BASE 0x1E700\n\n"
+    header_content += f"#define SPRITE_HAS_OPACITY_METADATA 1\n"
+    header_content += f"#define SPRITE_BYTES_PER_SPRITE (spriteWidth * spriteHeight)\n"
+    header_content += f"#define SPRITE_OPACITY_MASK_BYTES_PER_SPRITE (spriteWidth * 2)\n"
+    header_content += f"#define SPRITE_OPACITY_MASK_BASE (SPRITE_BASE + (NUM_SPRITES * SPRITE_BYTES_PER_SPRITE))\n\n"
     header_content += f"// Helper function to get sprite pixel\n"
     header_content += f"inline uint8_t getSpritePixel(uint8_t spriteNum, uint16_t offset) {{\n"
     header_content += f"    RIA.addr0 = SPRITE_BASE + (spriteNum << 8) + offset;\n"
@@ -115,6 +142,14 @@ def generate_header_constants(output_file, texture_size, num_textures):
     header_content += f"    sprColumnBuffer[14] = RIA.rw0;\n"
     header_content += f"    sprColumnBuffer[15] = RIA.rw0;\n"
     header_content += f"}}\n"
+    header_content += f"\n"
+    header_content += f"inline uint16_t fetchSpriteColumnMask(uint8_t spriteNum, uint8_t spriteX) {{\n"
+    header_content += f"    RIA.addr0 = SPRITE_OPACITY_MASK_BASE + (uint16_t)(spriteNum * SPRITE_OPACITY_MASK_BYTES_PER_SPRITE) + ((uint16_t)spriteX << 1);\n"
+    header_content += f"    RIA.step0 = 1;\n"
+    header_content += f"    uint8_t lo = RIA.rw0;\n"
+    header_content += f"    uint8_t hi = RIA.rw0;\n"
+    header_content += f"    return (uint16_t)lo | ((uint16_t)hi << 8);\n"
+    header_content += f"}}\n"
     header_content += f"#endif // SPRITE_DATA_H\n"
     
     with open(output_file, 'w') as f:
@@ -130,17 +165,21 @@ def main():
 
     # Generate textures from the predefined list of images
     textures = []
+    opacity_masks = []
     for image_path in image_files:
         if os.path.exists(image_path):
             print(f"Processing {image_path}...")
             texture = generate_texture_from_image(image_path, texture_size)
             textures.append(texture)
+            opacity_masks.append(build_opacity_masks(texture, texture_size))
         else:
             print(f"Warning: {image_path} not found. Using a blank texture.")
-            textures.append([0] * (texture_size[0] * texture_size[1]))  # Blank texture
+            blank = [0] * (texture_size[0] * texture_size[1])
+            textures.append(blank)
+            opacity_masks.append(build_opacity_masks(blank, texture_size))
 
     # Save all textures to a binary file
-    save_textures_to_binary(output_binary, textures, texture_size)
+    save_textures_to_binary(output_binary, textures, opacity_masks, texture_size)
     
     # Generate companion header file with constants and helper functions
     generate_header_constants(output_header, texture_size, len(textures))

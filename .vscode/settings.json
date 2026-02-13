@@ -13,4 +13,10 @@
             "statusBarVisibility": "hidden",
         }
     },
+    "chat.tools.terminal.autoApprove": {
+        "/^cd textures && python3 convert_sprites_to_bin\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    },
 }

@@ -9,7 +9,7 @@ add_executable(raycast)
 
 rp6502_asset(raycast 0x10000 textures/background-320x180.bin)
 rp6502_asset(raycast 0x1E100 textures/textures.bin)
-rp6502_asset(raycast 0x1E500 textures/sprites.bin)
+rp6502_asset(raycast 0x1E700 textures/sprites.bin)
 rp6502_asset(raycast 0x1F100 textures/needle-32x32.bin)
 
 
