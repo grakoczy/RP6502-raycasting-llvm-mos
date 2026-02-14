@@ -8,13 +8,16 @@ IMAGE_FILES = [
                 "fallout_background_320x180.png",
                 "concrete_16x16.png",
                 "concrete_16x16dark.png",
-                # "greystone16x16.png",
-                # "greystone16x16dark.png",
-                "redbrick_16x16.png",
-                "redbrick_16x16dark.png",
-                "barrel_16x16.png",
+                "greystone16x16.png",
+                "greystone16x16dark.png",
+                # "redbrick_16x16.png",
+                # "redbrick_16x16dark.png",
+                "maze_16x16.png",
+                "charge_16x16.png",
+                "needle_16x16.png",
+                # "barrel_16x16.png",
                 "bomb_16x16.png",
-                "apple_16x16.png"
+                # "apple_16x16.png"
 ]
 ANSI_COUNT = 16
 # SKY_COUNT = 16

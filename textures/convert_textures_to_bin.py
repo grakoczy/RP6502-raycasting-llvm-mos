@@ -9,8 +9,10 @@ image_files = [
     # "greystone16x16dark.png",
     "concrete_16x16.png",
     "concrete_16x16dark.png",
-    "redbrick_16x16.png",
-    "redbrick_16x16dark.png",
+    "greystone16x16.png",
+    "greystone16x16dark.png",
+    # "redbrick_16x16.png",
+    # "redbrick_16x16dark.png",
     "floor_16x16.png",
     "ceiling_16x16.png"
 ]

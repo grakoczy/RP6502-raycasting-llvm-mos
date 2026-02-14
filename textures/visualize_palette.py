@@ -51,7 +51,7 @@ def draw_palette_grid(palette):
         # Label with index
         draw.text((x0 + 2, y0 + 2), str(i), fill=text_col)
 
-    img.show()
+    # img.show()
     img.save("palette_preview.png")
     print("Saved preview to palette_preview.png")
 

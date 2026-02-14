@@ -10,6 +10,7 @@
 
 // Sprite base address in XRAM (set this in CMakeLists.txt)
 #define SPRITE_BASE 0x1E700
+
 #define SPRITE_HAS_OPACITY_METADATA 1
 #define SPRITE_BYTES_PER_SPRITE (spriteWidth * spriteHeight)
 #define SPRITE_OPACITY_MASK_BYTES_PER_SPRITE (spriteWidth * 2)

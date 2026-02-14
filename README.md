@@ -1,6 +1,6 @@
 # Raycasting demo for Picocomputer RP6502
 
-
+[video](media/raycaster_20260212.mp4)
 
 ## 🛠️ Building & Installation
 
@@ -8,10 +8,8 @@
 
 This project requires the **llvm-mos toolchain** to build:
 
-```bash
-# Install llvm-mos toolchain
-# See: https://github.com/llvm-mos/llvm-mos-sdk
-```
+Install llvm-mos toolchain
+See: https://github.com/llvm-mos/llvm-mos-sdk
 
 ### Build Instructions
 
