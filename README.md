@@ -1,6 +1,6 @@
 # Raycasting demo for Picocomputer RP6502
 
-[video](media/raycaster_20260212.mp4)
+[demo](media/raycaster_20260212.gif)
 
 ## 🛠️ Building & Installation
 
