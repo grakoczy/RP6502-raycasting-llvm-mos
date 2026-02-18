@@ -29,10 +29,9 @@ Follow istructions found here: [vscode-llvm-mos](https://github.com/picocomputer
 | **Space** | Trigger Radar Scan |
 | **+** | Increase Viewport Size |
 | **-** | Decrease Viewport Size |
-| **M** | Toggle Interlaced Mode (Performance toggle) |
+| **M** | Toggle Interlaced Mode |
 | **T** | Toggle Floor/Ceiling Textures |
 | **S** | Toggle Sprite Rendering |
-| **R** | Toggle Floor Row Skip (Optimization) |
 | **Esc** | Exit Demo |
 
 ## 📝 Author

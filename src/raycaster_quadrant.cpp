@@ -52,7 +52,7 @@ FpF16<7> dirX(0);
 FpF16<7> dirY(-1); 
 FpF16<7> planeX(0.66);
 FpF16<7> planeY(0.0); 
-FpF16<7> moveSpeed(0.2); 
+FpF16<7> moveSpeed(0.25); 
 FpF16<7> playerScale(5);
 
 // sin(pi/16) and cos(pi/16) for 11.25 degree steps
@@ -86,8 +86,6 @@ uint8_t xOffset = ((SCREEN_WIDTH - w * 2) / 2) - 8;
 uint8_t yOffset = ((SCREEN_HEIGHT - h * 2) / 2) - 20;
 
 uint8_t fps = 0;
-
-uint16_t texSize = texWidth * texHeight -1;
 bool interlacedMode = true;
 
 // Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
@@ -99,15 +97,15 @@ uint8_t ceilingColors[MAX_WINDOW_HEIGHT];
 
 // --- Floor/Ceiling Texturing ---
 #define FLOOR_BLOCK_IDLE 1
-#define FLOOR_BLOCK_MOVING 2
+#define FLOOR_BLOCK_MOVING 1
 #define FLOOR_TEX_REPEAT 2  // How many times texture repeats per map cell (independent of walls)
 #define FLOOR_TEX  4   // texture index for floor
 #define CEIL_TEX   5   // texture index for ceiling
 #define FLOOR_MAX_COLS (MAX_WINDOW_WIDTH  / FLOOR_BLOCK_IDLE)  // 96 for block=1
 #define FLOOR_MAX_ROWS (MAX_WINDOW_HEIGHT / 2 / FLOOR_BLOCK_IDLE) // 32 for block=1
 #define FLOOR_STRIDE   FLOOR_MAX_COLS
-#define FLOOR_MOVE_SAMPLE_X 1
-#define FLOOR_MOVE_ROW_STEP 1
+#define FLOOR_MOVE_SAMPLE_X 2
+#define FLOOR_MOVE_ROW_STEP 2
 
 uint8_t floorCols;   // actual columns for current w
 uint8_t floorRows;   // actual rows for current h
@@ -131,17 +129,16 @@ int16_t invFloorCols;
 // Precomputed row pointers to eliminate yi * FLOOR_STRIDE multiplications
 uint8_t* floorTileRows[FLOOR_MAX_ROWS];
 
-bool floorTexEnabled = true;  // toggle floor/ceiling texturing
 bool floorRowSkipEnabled = true; // toggle aggressive row skipping while moving
+
+#define FLOOR_MODE_TEXTURES 0
+#define FLOOR_MODE_PLAIN    1
+uint8_t floorDisplayMode = FLOOR_MODE_TEXTURES;
 
 // Cached floor/ceiling textures (16x16) to avoid per-frame XRAM reads
 uint8_t floorTexCache[256];
 uint8_t ceilTexCache[256];
 bool floorTexCacheReady = false;
-
-// Fractional-to-texture lookup for floor/ceiling (7-bit frac -> 0..15)
-uint8_t floorFracToTex[128];
-bool floorFracToTexReady = false;
 
 // ZBuffer for sprite depth testing (stores perpendicular wall distance per stripe)
 int16_t ZBuffer[MAX_WINDOW_WIDTH];
@@ -158,6 +155,11 @@ struct Sprite {
 Sprite sprites[numSprites];
 uint8_t sprite_scan_decay[numSprites];
 bool render_sprites = true; // toggle sprite rendering
+
+#define SPRITE_MAX_VISIBLE_MOVING 4
+#define SPRITE_MAX_DIST_TILES_MOVING 10
+#define SPRITE_MIN_HEIGHT_MOVING 4
+#define SPRITE_MAX_STRIPES_MOVING 24
 
 bool gamestate_changed = true;
 uint8_t gamestate = 1;  
@@ -295,6 +297,29 @@ uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min,
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
 }
 
+static inline int16_t mulFrac7Fast(int16_t value, uint8_t frac7) {
+    if ((frac7 & 0x1F) == 0) {
+        switch (frac7 >> 5) {
+            case 0: return 0;
+            case 1: return value >> 2;
+            case 2: return value >> 1;
+            case 3: return value - (value >> 2);
+            default: return value;
+        }
+    }
+    return (int16_t)(((int32_t)value * frac7) >> 7);
+}
+
+static inline uint8_t floorFracToTexCoord(uint8_t frac7) {
+#if FLOOR_TEX_REPEAT == 1
+    return (uint8_t)((frac7 >> 3) & 0x0F);
+#elif FLOOR_TEX_REPEAT == 2
+    return (uint8_t)((frac7 >> 2) & 0x0F);
+#else
+    return (uint8_t)((frac7 >> 1) & 0x0F);
+#endif
+}
+
 static uint16_t isqrt16(uint16_t value) {
     uint16_t result = 0;
     uint16_t bit = 1u << 14;
@@ -320,6 +345,8 @@ static uint16_t isqrt16(uint16_t value) {
 void drawBufferDouble_Optimized() {
     uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     uint8_t* buffer_ptr_loc = buffer;
+    const uint8_t blocks = w >> 3;
+    const bool coarseX = (currentStep >= 2);
 
     for (uint8_t j = 0; j < h; ++j) {
         RIA.addr0 = screen_addr;
@@ -327,18 +354,41 @@ void drawBufferDouble_Optimized() {
         RIA.addr1 = screen_addr + SCREEN_WIDTH;
         RIA.step1 = 1;
         uint8_t* p = buffer_ptr_loc;
-        // Unroll 8 pixels per block (width must be multiple of 8)
-        const uint8_t blocks = w >> 3;
-        for (uint8_t i = 0; i < blocks; ++i) {
-            #define PUSH_PIXEL \
-                { \
-                    uint8_t c = *p++; \
-                    RIA.rw0 = c; RIA.rw0 = c; \
-                    RIA.rw1 = c; RIA.rw1 = c; \
-                }
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            #undef PUSH_PIXEL
+        if (!coarseX) {
+            for (uint8_t i = 0; i < blocks; ++i) {
+                #define PUSH_PIXEL \
+                    { \
+                        uint8_t c = *p++; \
+                        RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = c; RIA.rw1 = c; \
+                    }
+                PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+                PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+                #undef PUSH_PIXEL
+            }
+        } else {
+            const uint8_t pairBlocks = w >> 4;
+            for (uint8_t i = 0; i < pairBlocks; ++i) {
+                #define PUSH_PIXEL_PAIR \
+                    { \
+                        uint8_t c = *p; p += 2; \
+                        RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = c; RIA.rw1 = c; RIA.rw1 = c; RIA.rw1 = c; \
+                    }
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                #undef PUSH_PIXEL_PAIR
+            }
+            if (w & 0x08) {
+                #define PUSH_PIXEL_PAIR \
+                    { \
+                        uint8_t c = *p; p += 2; \
+                        RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = c; RIA.rw1 = c; RIA.rw1 = c; RIA.rw1 = c; \
+                    }
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                #undef PUSH_PIXEL_PAIR
+            }
         }
         screen_addr += (SCREEN_WIDTH * 2);
         buffer_ptr_loc += w; 
@@ -348,6 +398,8 @@ void drawBufferDouble_Optimized() {
 void drawBufferDouble_Optimized_Interlaced(bool oddField) {
     uint16_t screen_addr = SCREEN_WIDTH * (yOffset + (oddField ? 1 : 0)) + xOffset;
     uint8_t* buffer_ptr_loc = buffer;
+    const uint8_t blocks = w >> 3;
+    const bool coarseX = (currentStep >= 2);
 
     for (uint8_t j = 0; j < h; ++j) {
         RIA.addr0 = screen_addr;
@@ -355,18 +407,41 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
         RIA.addr1 = oddField ? (screen_addr - SCREEN_WIDTH) : (screen_addr + SCREEN_WIDTH);
         RIA.step1 = 1;
         uint8_t* p = buffer_ptr_loc;
-        // Unroll 8 pixels per block (width must be multiple of 8)
-        const uint8_t blocks = w >> 3;
-        for (uint8_t i = 0; i < blocks; ++i) {
-            #define PUSH_PIXEL \
-                { \
-                    uint8_t c = *p++; \
-                    RIA.rw0 = c; RIA.rw0 = c; \
-                    RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
-                }
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            #undef PUSH_PIXEL
+        if (!coarseX) {
+            for (uint8_t i = 0; i < blocks; ++i) {
+                #define PUSH_PIXEL \
+                    { \
+                        uint8_t c = *p++; \
+                        RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
+                    }
+                PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+                PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
+                #undef PUSH_PIXEL
+            }
+        } else {
+            const uint8_t pairBlocks = w >> 4;
+            for (uint8_t i = 0; i < pairBlocks; ++i) {
+                #define PUSH_PIXEL_PAIR \
+                    { \
+                        uint8_t c = *p; p += 2; \
+                        RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
+                    }
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                #undef PUSH_PIXEL_PAIR
+            }
+            if (w & 0x08) {
+                #define PUSH_PIXEL_PAIR \
+                    { \
+                        uint8_t c = *p; p += 2; \
+                        RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
+                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
+                    }
+                PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
+                #undef PUSH_PIXEL_PAIR
+            }
         }
         screen_addr += (SCREEN_WIDTH << 1);
         buffer_ptr_loc += w;
@@ -487,6 +562,35 @@ void precalculateRotations() {
           deltaDistY_Q0[i][x] = calcDelta(rayDirY);
       }
 
+      int16_t rayDirX0raw = (dirXValues[i] - planeXValues[i]).GetRawVal();
+      int16_t rayDirY0raw = (dirYValues[i] - planeYValues[i]).GetRawVal();
+      int16_t rayDirX1raw = (dirXValues[i] + planeXValues[i]).GetRawVal();
+      int16_t rayDirY1raw = (dirYValues[i] + planeYValues[i]).GetRawVal();
+
+      for (uint8_t q = 0; q < 4; q++) {
+          uint8_t rot = i + q * QUADRANT_STEPS;
+          int16_t x0 = rayDirX0raw;
+          int16_t y0 = rayDirY0raw;
+          int16_t x1 = rayDirX1raw;
+          int16_t y1 = rayDirY1raw;
+
+          if (q == 1) {
+              x0 = -rayDirY0raw; y0 = rayDirX0raw;
+              x1 = -rayDirY1raw; y1 = rayDirX1raw;
+          } else if (q == 2) {
+              x0 = -rayDirX0raw; y0 = -rayDirY0raw;
+              x1 = -rayDirX1raw; y1 = -rayDirY1raw;
+          } else if (q == 3) {
+              x0 = rayDirY0raw; y0 = -rayDirX0raw;
+              x1 = rayDirY1raw; y1 = -rayDirX1raw;
+          }
+
+          floorRayDirX0raw[rot] = x0;
+          floorRayDirY0raw[rot] = y0;
+          floorDRayX[rot] = x1 - x0;
+          floorDRayY[rot] = y1 - y0;
+      }
+
       FpF16<7> oldDirX = currentDirX;
       currentDirX = currentDirX * cos_r - currentDirY * sin_r;
       currentDirY = oldDirX * sin_r + currentDirY * cos_r;
@@ -512,6 +616,16 @@ static void precalculateFloorRowTablesForRot(uint8_t rotStep,
         int16_t totalStepY = (int16_t)(((int32_t)rowDist * dRayY) >> 7);
         floorStepXraw[rotStep][yi] = (int16_t)(((int32_t)totalStepX * invFloorCols) >> 14);
         floorStepYraw[rotStep][yi] = (int16_t)(((int32_t)totalStepY * invFloorCols) >> 14);
+    }
+}
+
+static void precalculateFloorRowTablesAllRot() {
+    for (uint8_t rot = 0; rot < ROTATION_STEPS; rot++) {
+        precalculateFloorRowTablesForRot(rot,
+                                         floorRayDirX0raw[rot],
+                                         floorRayDirY0raw[rot],
+                                         floorDRayX[rot],
+                                         floorDRayY[rot]);
     }
 }
 
@@ -575,21 +689,6 @@ void updateRaycasterVectors() {
     dirY = currDirY;
     planeX = currPlaneX;
     planeY = currPlaneY;
-
-    // Cache floor/ceiling ray deltas for the current rotation step
-    int16_t rayDirX0raw = (dirX - planeX).GetRawVal();
-    int16_t rayDirY0raw = (dirY - planeY).GetRawVal();
-    int16_t rayDirX1raw = (dirX + planeX).GetRawVal();
-    int16_t rayDirY1raw = (dirY + planeY).GetRawVal();
-    floorRayDirX0raw[currentRotStep] = rayDirX0raw;
-    floorRayDirY0raw[currentRotStep] = rayDirY0raw;
-    floorDRayX[currentRotStep] = rayDirX1raw - rayDirX0raw;
-    floorDRayY[currentRotStep] = rayDirY1raw - rayDirY0raw;
-    precalculateFloorRowTablesForRot(currentRotStep,
-                                     rayDirX0raw,
-                                     rayDirY0raw,
-                                     floorDRayX[currentRotStep],
-                                     floorDRayY[currentRotStep]);
 
     // Cache inverse determinant for sprite projection
     FpF16<7> det = planeX * dirY - dirX * planeY;
@@ -655,31 +754,9 @@ void precalculateFloorTables() {
     // printf("Floor tables: %dx%d blocks, block=%d, texRepeat=%d\n", 
             // floorCols, floorRows, floorBlock, FLOOR_TEX_REPEAT);
 
-    if (!floorFracToTexReady) {
-        for (uint8_t i = 0; i < 128; i++) {
-            #if FLOOR_TEX_REPEAT == 1
-                floorFracToTex[i] = (i >> 3) & 0x0F;
-            #elif FLOOR_TEX_REPEAT == 2
-                floorFracToTex[i] = (i >> 2) & 0x0F;
-            #else  // FLOOR_TEX_REPEAT == 4
-                floorFracToTex[i] = (i >> 1) & 0x0F;
-            #endif
-        }
-        floorFracToTexReady = true;
-    }
-
     // Keep floor row caches in sync after resize without requiring a rotation
-    int16_t rayDirX0raw = (dirX - planeX).GetRawVal();
-    int16_t rayDirY0raw = (dirY - planeY).GetRawVal();
-    int16_t rayDirX1raw = (dirX + planeX).GetRawVal();
-    int16_t rayDirY1raw = (dirY + planeY).GetRawVal();
-    int16_t dRayX = rayDirX1raw - rayDirX0raw;
-    int16_t dRayY = rayDirY1raw - rayDirY0raw;
-    floorRayDirX0raw[currentRotStep] = rayDirX0raw;
-    floorRayDirY0raw[currentRotStep] = rayDirY0raw;
-    floorDRayX[currentRotStep] = dRayX;
-    floorDRayY[currentRotStep] = dRayY;
-    precalculateFloorRowTablesForRot(currentRotStep, rayDirX0raw, rayDirY0raw, dRayX, dRayY);
+    // Rebuild floor row tables for all rotation steps (done on resize/quality changes only)
+    precalculateFloorRowTablesAllRot();
 }
 
 static inline void updateFloorBlockForCurrentStep() {
@@ -717,6 +794,11 @@ void precalculateLineHeights() {
 void renderSprites() {
     // Skip if no sprites or sprite rendering is disabled
     if (numSprites == 0 || !render_sprites) return;
+
+    const bool movingLowQuality = (currentStep >= 2);
+    const uint8_t maxVisibleSprites = movingLowQuality ? SPRITE_MAX_VISIBLE_MOVING : numSprites;
+    const int16_t maxDistRawMoving = (int16_t)(SPRITE_MAX_DIST_TILES_MOVING * 128);
+    const uint8_t maxStripesMoving = movingLowQuality ? SPRITE_MAX_STRIPES_MOVING : w;
     
     // Calculate inverse determinant for camera transformation
     // invDet = 1 / (planeX * dirY - dirX * planeY)
@@ -731,12 +813,24 @@ void renderSprites() {
     
     int32_t w_half = (w >> 1);
     const int8_t spriteStripeStep = (currentStep >= 2) ? 2 : 1;
+    uint8_t renderedSprites = 0;
+    uint8_t usedStripes = 0;
     
-    // For each sprite (no sorting needed for 2-3 sprites, draw far to near)
     for (int8_t i = numSprites - 1; i >= 0; i--) {
+        if (movingLowQuality && renderedSprites >= maxVisibleSprites) break;
+
         // Translate sprite position to relative to camera (raw 9.7)
         int16_t spriteXraw = sprites[i].x.GetRawVal() - posXRaw;
         int16_t spriteYraw = sprites[i].y.GetRawVal() - posYRaw;
+
+        if (movingLowQuality) {
+            int16_t absX = (spriteXraw < 0) ? -spriteXraw : spriteXraw;
+            int16_t absY = (spriteYraw < 0) ? -spriteYraw : spriteYraw;
+            if (absX > maxDistRawMoving || absY > maxDistRawMoving) continue;
+        }
+
+        int32_t forward = (int32_t)dirXRaw * spriteXraw + (int32_t)dirYRaw * spriteYraw;
+        if (forward <= 0) continue;
 
         // Transform sprite with the inverse camera matrix using raw math
         int32_t t1 = ((int32_t)dirYRaw * spriteXraw) >> 7;
@@ -761,6 +855,7 @@ void renderSprites() {
         // Sprite is quarter of wall height (as specified)
         int16_t spr_height = wall_height / 2;
         if (spr_height < 1) spr_height = 1;
+        if (movingLowQuality && spr_height < SPRITE_MIN_HEIGHT_MOVING) continue;
         
         // Position sprite like a short wall sitting on the floor
         // Walls are centered on h/2, so bottom is at: h/2 + wall_height/2
@@ -789,6 +884,17 @@ void renderSprites() {
         
         // Skip if sprite is completely off screen
         if (drawStartX >= drawEndX) continue;
+
+        uint8_t spriteSpanX = (uint8_t)(drawEndX - drawStartX);
+        uint8_t spriteStripes = (uint8_t)((spriteSpanX + spriteStripeStep - 1) / spriteStripeStep);
+        if (movingLowQuality) {
+            if (spriteStripes == 0) continue;
+            if (usedStripes >= maxStripesMoving) break;
+            if ((uint16_t)usedStripes + spriteStripes > maxStripesMoving) continue;
+        }
+
+        renderedSprites++;
+        usedStripes = (uint8_t)(usedStripes + spriteStripes);
         
         // Precalculate stepping (avoid division in loop)
         // 16.16 fixed point for texture coordinates
@@ -818,6 +924,11 @@ void renderSprites() {
         bool lastColAllOpaque = false;
         uint16_t lastOpaqueMask = 0;
 
+        uint8_t spriteTex = sprites[i].texture;
+        if (spriteTex >= NUM_SPRITES) {
+            spriteTex %= NUM_SPRITES;
+        }
+
         // Loop through every vertical stripe of the sprite on screen
         int32_t texAdvance = texStep * spriteStripeStep;
         for (int16_t stripe = drawStartX; stripe < drawEndX; stripe += spriteStripeStep) {
@@ -829,12 +940,26 @@ void renderSprites() {
 
                 // Only fetch if texture column changed
                 if (texX != lastTexX) {
-                    fetchSpriteColumn(sprites[i].texture, (uint8_t)texX);
+                    fetchSpriteColumn(spriteTex, (uint8_t)texX);
                     lastTexX = texX;
 #if SPRITE_HAS_OPACITY_METADATA
-                    lastOpaqueMask = fetchSpriteColumnMask(sprites[i].texture, (uint8_t)texX);
-                    lastColAllTransparent = (lastOpaqueMask == 0);
-                    lastColAllOpaque = (lastOpaqueMask == 0xFFFF);
+                    if (movingLowQuality) {
+                        uint8_t transparentCount = 0;
+                        lastOpaqueMask = 0;
+                        for (uint8_t sy = 0; sy < 16; sy++) {
+                            if (sprColumnBuffer[sy] != 0x21) {
+                                lastOpaqueMask |= (uint16_t)1 << sy;
+                            } else {
+                                transparentCount++;
+                            }
+                        }
+                        lastColAllTransparent = (transparentCount == 16);
+                        lastColAllOpaque = (transparentCount == 0);
+                    } else {
+                        lastOpaqueMask = fetchSpriteColumnMask(spriteTex, (uint8_t)texX);
+                        lastColAllTransparent = (lastOpaqueMask == 0);
+                        lastColAllOpaque = (lastOpaqueMask == 0xFFFF);
+                    }
 #else
                     uint8_t transparentCount = 0;
                     for (uint8_t sy = 0; sy < 16; sy++) {
@@ -939,8 +1064,8 @@ void computeFloorCeiling() {
         uint8_t* row = floorTileRows[yi];
         
         for (uint8_t xi = 0; xi < floorCols; xi += sampleXStep) {
-            uint8_t texX = floorFracToTex[(uint8_t)floorXraw & 0x7F];
-            uint8_t texY = floorFracToTex[(uint8_t)floorYraw & 0x7F];
+            uint8_t texX = floorFracToTexCoord((uint8_t)floorXraw & 0x7F);
+            uint8_t texY = floorFracToTexCoord((uint8_t)floorYraw & 0x7F);
             uint16_t texOffset = ((uint16_t)texY << 4) | texX;
 
             row[xi] = (uint8_t)texOffset;
@@ -966,6 +1091,15 @@ void computeFloorCeiling() {
     }
 }
 
+// Plain colors used by the plain floor mode.
+void updatePlainFloorColors() {
+    uint8_t halfH = h >> 1;
+    for (uint8_t y = 0; y < halfH; y++) {
+        ceilingColors[y] = 18;
+        floorColors[y + halfH] = 24;
+    }
+}
+
 static int raycastF_NoFloorTex() {
     updateFloorBlockForCurrentStep();
 
@@ -976,13 +1110,14 @@ static int raycastF_NoFloorTex() {
 
     const int16_t posXRaw = posX.GetRawVal();
     const int16_t posYRaw = posY.GetRawVal();
-    const int16_t fracX = posXRaw & 0x7F;
-    const int16_t invFracX = 128 - fracX;
-    const int16_t fracY = posYRaw & 0x7F;
-    const int16_t invFracY = 128 - fracY;
+    const uint8_t fracX = (uint8_t)(posXRaw & 0x7F);
+    const uint8_t invFracX = (uint8_t)(128 - fracX);
+    const uint8_t fracY = (uint8_t)(posYRaw & 0x7F);
+    const uint8_t invFracY = (uint8_t)(128 - fracY);
 
     const int mapX_start = posXRaw >> 7;
     const int mapY_start = posYRaw >> 7;
+    int8_t* mapPtr = (int8_t*)worldMap;
 
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
@@ -1002,21 +1137,20 @@ static int raycastF_NoFloorTex() {
 
         if (rDX < 0) {
             mapStepX = -1;
-            zp_sideDistX = ((int32_t)fracX * zp_deltaX) >> 7;
+            zp_sideDistX = mulFrac7Fast(zp_deltaX, fracX);
         } else {
             mapStepX = 1;
-            zp_sideDistX = ((int32_t)invFracX * zp_deltaX) >> 7;
+            zp_sideDistX = mulFrac7Fast(zp_deltaX, invFracX);
         }
 
         if (rDY < 0) {
             mapStepY = -16;
-            zp_sideDistY = ((int32_t)fracY * zp_deltaY) >> 7;
+            zp_sideDistY = mulFrac7Fast(zp_deltaY, fracY);
         } else {
             mapStepY = 16;
-            zp_sideDistY = ((int32_t)invFracY * zp_deltaY) >> 7;
+            zp_sideDistY = mulFrac7Fast(zp_deltaY, invFracY);
         }
 
-        int8_t* mapPtr = (int8_t*)worldMap;
         while (mapPtr[mapOffset] == 0) {
             if (zp_sideDistX < zp_sideDistY) {
                 zp_sideDistX += zp_deltaX;
@@ -1150,7 +1284,8 @@ static int raycastF_NoFloorTex() {
 int raycastF() {
     updateFloorBlockForCurrentStep();
 
-    if (!floorTexEnabled) {
+    if (floorDisplayMode == FLOOR_MODE_PLAIN) {
+        updatePlainFloorColors();
         return raycastF_NoFloorTex();
     }
 
@@ -1167,13 +1302,14 @@ int raycastF() {
     // 2. Pre-calculate fractional positions ONCE per frame
     const int16_t posXRaw = posX.GetRawVal();
     const int16_t posYRaw = posY.GetRawVal();
-    const int16_t fracX = posXRaw & 0x7F;        
-    const int16_t invFracX = 128 - fracX;        
-    const int16_t fracY = posYRaw & 0x7F;
-    const int16_t invFracY = 128 - fracY;
+    const uint8_t fracX = (uint8_t)(posXRaw & 0x7F);
+    const uint8_t invFracX = (uint8_t)(128 - fracX);
+    const uint8_t fracY = (uint8_t)(posYRaw & 0x7F);
+    const uint8_t invFracY = (uint8_t)(128 - fracY);
 
     const int mapX_start = posXRaw >> 7;
     const int mapY_start = posYRaw >> 7;
+    int8_t* mapPtr = (int8_t*)worldMap;
 
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
@@ -1195,22 +1331,21 @@ int raycastF() {
         // 3. FAST SideDist Calculation
         if(rDX < 0) {
             mapStepX = -1;
-            zp_sideDistX = ((int32_t)fracX * zp_deltaX) >> 7;
+            zp_sideDistX = mulFrac7Fast(zp_deltaX, fracX);
         } else {
             mapStepX = 1;
-            zp_sideDistX = ((int32_t)invFracX * zp_deltaX) >> 7;
+            zp_sideDistX = mulFrac7Fast(zp_deltaX, invFracX);
         }
         
         if(rDY < 0) {
             mapStepY = -16; // -mapWidth
-            zp_sideDistY = ((int32_t)fracY * zp_deltaY) >> 7;
+            zp_sideDistY = mulFrac7Fast(zp_deltaY, fracY);
         } else {
             mapStepY = 16; // +mapWidth
-            zp_sideDistY = ((int32_t)invFracY * zp_deltaY) >> 7;
+            zp_sideDistY = mulFrac7Fast(zp_deltaY, invFracY);
         }
         
         // 4. Tight DDA Loop
-        int8_t* mapPtr = (int8_t*)worldMap;
         while(mapPtr[mapOffset] == 0) {
             if(zp_sideDistX < zp_sideDistY) {
                 zp_sideDistX += zp_deltaX;
@@ -1633,14 +1768,10 @@ void updateWindowSize(int8_t new_w) {
 }
 
 int16_t main() {
-    bool handled_key = false;
     bool paused = false;
-    bool show_buffers_indicators = true;
-    uint8_t mode = 0;
-    uint8_t i = 0;
     uint8_t timer = 0;
     bool scan_key_latch = false;
-    bool map_visible_prev = false;
+    bool t_key_latch = false;
 
     for(int i = 0; i < h / 2; i++) {
         // uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
@@ -1670,7 +1801,6 @@ int16_t main() {
     posY = FpF16<7>(startPoxY);
 
     // print_map();
-    // WaitForAnyKey();
 
     placeSprites();
 
@@ -1680,6 +1810,7 @@ int16_t main() {
     precalculateFloorTables();
     
     // Initialize active vectors
+    currentRotStep = 15;
     updateRaycasterVectors(); 
 
     init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
@@ -1698,6 +1829,7 @@ int16_t main() {
 
     draw_ui();
     init_needle_sprite();
+    WaitForAnyKey();
 
     handleCalculation();
 
@@ -1782,9 +1914,11 @@ int16_t main() {
                     fillBuffer(BLACK);
                     draw_ui();
                 }
-                if (key(KEY_T)) {
-                    floorTexEnabled = !floorTexEnabled;
+                bool t_down = key(KEY_T);
+                if (t_down && !t_key_latch) {
+                    floorDisplayMode = (uint8_t)((floorDisplayMode + 1) % 2);
                 }
+                t_key_latch = t_down;
                 if (key(KEY_S)) {
                     render_sprites = !render_sprites;
                 }
@@ -1794,7 +1928,6 @@ int16_t main() {
                 if (key(KEY_ESC)) {
                     break;
                 }
-                handled_key = true;
             }
 
         }
@@ -1817,12 +1950,10 @@ int16_t main() {
             draw_map();
             draw_player();
         if (scan_active) {
-            bool any_decay = false;
             for (uint8_t y = 0; y < mapHeight; y++) {
                 for (uint8_t x = 0; x < mapWidth; x++) {
                     if (scan_decay[y][x] > 0) {
                         scan_decay[y][x]--;
-                        if (scan_decay[y][x] > 0) any_decay = true;
                     }
                 }
             }
@@ -1832,7 +1963,6 @@ int16_t main() {
                     }
                 }
             }
-            map_visible_prev = map_visible;
 
             if (scan_frame + 1 >= SCAN_FRAMES + SCAN_DECAY_MAX) {
                 scan_active = false;
