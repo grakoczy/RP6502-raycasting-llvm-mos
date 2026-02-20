@@ -76,6 +76,8 @@ uint8_t map_draw_distance = 3;
 
 int8_t currentStep = 1;
 int8_t movementStep = 2; 
+uint8_t coarseRayStep = 4;
+uint8_t coarseSidePercent = 33;
 
 uint8_t w = MAX_WINDOW_WIDTH;
 uint8_t h = MAX_WINDOW_HEIGHT; 
@@ -86,14 +88,12 @@ uint8_t xOffset = ((SCREEN_WIDTH - w * 2) / 2) - 8;
 uint8_t yOffset = ((SCREEN_HEIGHT - h * 2) / 2) - 20;
 
 uint8_t fps = 0;
-bool interlacedMode = true;
+bool interlacedMode = false;
 
 // Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
 const uint8_t texRepeat = 4;
 
 uint8_t buffer[MAX_WINDOW_HEIGHT * MAX_WINDOW_WIDTH];
-uint8_t floorColors[MAX_WINDOW_HEIGHT];
-uint8_t ceilingColors[MAX_WINDOW_HEIGHT];
 
 // --- Floor/Ceiling Texturing ---
 #define FLOOR_BLOCK_IDLE 1
@@ -106,6 +106,9 @@ uint8_t ceilingColors[MAX_WINDOW_HEIGHT];
 #define FLOOR_STRIDE   FLOOR_MAX_COLS
 #define FLOOR_MOVE_SAMPLE_X 2
 #define FLOOR_MOVE_ROW_STEP 2
+
+#define FLOOR_COLOR 23
+#define CEILING_COLOR 26
 
 uint8_t floorCols;   // actual columns for current w
 uint8_t floorRows;   // actual rows for current h
@@ -131,9 +134,50 @@ uint8_t* floorTileRows[FLOOR_MAX_ROWS];
 
 bool floorRowSkipEnabled = true; // toggle aggressive row skipping while moving
 
+static inline uint8_t getWallRayStepAtX(uint8_t x) {
+    if (currentStep < 2) return 1;
+
+    uint8_t centerStep = (movementStep > 0) ? (uint8_t)movementStep : 1;
+    if (centerStep > 4) centerStep = 4;
+    uint8_t sideStep = (coarseRayStep >= centerStep) ? coarseRayStep : centerStep;
+    if (sideStep > 4) sideStep = 4;
+    if (coarseSidePercent == 0 || sideStep == centerStep) return centerStep;
+
+    uint16_t sideWidth16 = ((uint16_t)w * (uint16_t)coarseSidePercent) / 100;
+    if (sideWidth16 > (w >> 1)) sideWidth16 = (w >> 1);
+    uint8_t sideWidth = (uint8_t)sideWidth16;
+    if (sideWidth == 0) return centerStep;
+
+    if (x < sideWidth || x >= (uint8_t)(w - sideWidth)) {
+        return sideStep;
+    }
+    return centerStep;
+}
+
+static inline void fillSpan(uint8_t* dst, uint8_t span, uint8_t value) {
+    dst[0] = value;
+    if (span > 1) dst[1] = value;
+    if (span > 2) dst[2] = value;
+    if (span > 3) dst[3] = value;
+}
+
+static inline void fillZSpan(int16_t* zbuf, uint8_t x, uint8_t span, int16_t value) {
+    zbuf[x] = value;
+    if (span > 1) zbuf[x + 1] = value;
+    if (span > 2) zbuf[x + 2] = value;
+    if (span > 3) zbuf[x + 3] = value;
+}
+
+static inline uint8_t ceilDivByStep(uint8_t value, uint8_t step) {
+    if (step <= 1) return value;
+    if (step == 2) return (uint8_t)((value + 1) >> 1);
+    if (step == 4) return (uint8_t)((value + 3) >> 2);
+    return (uint8_t)((value + step - 1) / step);
+}
+
 #define FLOOR_MODE_TEXTURES 0
 #define FLOOR_MODE_PLAIN    1
-uint8_t floorDisplayMode = FLOOR_MODE_TEXTURES;
+uint8_t floorDisplayMode = FLOOR_MODE_PLAIN;
 
 // Cached floor/ceiling textures (16x16) to avoid per-frame XRAM reads
 uint8_t floorTexCache[256];
@@ -160,6 +204,7 @@ bool render_sprites = true; // toggle sprite rendering
 #define SPRITE_MAX_DIST_TILES_MOVING 10
 #define SPRITE_MIN_HEIGHT_MOVING 4
 #define SPRITE_MAX_STRIPES_MOVING 24
+
 
 bool gamestate_changed = true;
 uint8_t gamestate = 1;  
@@ -404,8 +449,6 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
     for (uint8_t j = 0; j < h; ++j) {
         RIA.addr0 = screen_addr;
         RIA.step0 = 1;
-        RIA.addr1 = oddField ? (screen_addr - SCREEN_WIDTH) : (screen_addr + SCREEN_WIDTH);
-        RIA.step1 = 1;
         uint8_t* p = buffer_ptr_loc;
         if (!coarseX) {
             for (uint8_t i = 0; i < blocks; ++i) {
@@ -413,7 +456,6 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
                     { \
                         uint8_t c = *p++; \
                         RIA.rw0 = c; RIA.rw0 = c; \
-                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
                     }
                 PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
                 PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
@@ -426,7 +468,6 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
                     { \
                         uint8_t c = *p; p += 2; \
                         RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
-                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
                     }
                 PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
                 PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
@@ -437,7 +478,6 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
                     { \
                         uint8_t c = *p; p += 2; \
                         RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; RIA.rw0 = c; \
-                        RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; RIA.rw1 = BLACK; \
                     }
                 PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR; PUSH_PIXEL_PAIR;
                 #undef PUSH_PIXEL_PAIR
@@ -524,7 +564,6 @@ void precalculateRotations() {
         cameraXValues[x] = FpF16<7>(2 * x) / fw - FpF16<7>(1);
     }
 
-    printf("Precalc Q1 & all quadrant deltas...");
     
     const int16_t NEAR_ZERO_THRESHOLD = 2;
     const FpF16<7> MAX_DELTA_DIST(127);
@@ -599,7 +638,6 @@ void precalculateRotations() {
       currentPlaneX = currentPlaneX * cos_r - currentPlaneY * sin_r;
       currentPlaneY = oldPlaneX * sin_r + currentPlaneY * cos_r;
     }
-    printf("Done\n");
 }
 
 static void precalculateFloorRowTablesForRot(uint8_t rotStep,
@@ -792,13 +830,32 @@ void precalculateLineHeights() {
 
 // Render sprites using raycasting sprite projection
 void renderSprites() {
-    // Skip if no sprites or sprite rendering is disabled
     if (numSprites == 0 || !render_sprites) return;
 
     const bool movingLowQuality = (currentStep >= 2);
     const uint8_t maxVisibleSprites = movingLowQuality ? SPRITE_MAX_VISIBLE_MOVING : numSprites;
     const int16_t maxDistRawMoving = (int16_t)(SPRITE_MAX_DIST_TILES_MOVING * 128);
     const uint8_t maxStripesMoving = movingLowQuality ? SPRITE_MAX_STRIPES_MOVING : w;
+
+    uint8_t centerStripeStep = 1;
+    uint8_t sideStripeStep = 1;
+    uint8_t sideWidth = 0;
+    uint8_t sideStart = 0;
+    uint8_t sideEnd = w;
+    if (movingLowQuality) {
+        centerStripeStep = (movementStep > 0) ? (uint8_t)movementStep : 1;
+        if (centerStripeStep > 4) centerStripeStep = 4;
+        sideStripeStep = (coarseRayStep >= centerStripeStep) ? coarseRayStep : centerStripeStep;
+        if (sideStripeStep > 4) sideStripeStep = 4;
+
+        if (coarseSidePercent > 0 && sideStripeStep > centerStripeStep) {
+            uint16_t sideWidth16 = ((uint16_t)w * (uint16_t)coarseSidePercent) / 100;
+            if (sideWidth16 > (w >> 1)) sideWidth16 = (w >> 1);
+            sideWidth = (uint8_t)sideWidth16;
+            sideStart = sideWidth;
+            sideEnd = (uint8_t)(w - sideWidth);
+        }
+    }
     
     // Calculate inverse determinant for camera transformation
     // invDet = 1 / (planeX * dirY - dirX * planeY)
@@ -812,7 +869,6 @@ void renderSprites() {
     const int16_t posYRaw = posY.GetRawVal();
     
     int32_t w_half = (w >> 1);
-    const int8_t spriteStripeStep = (currentStep >= 2) ? 2 : 1;
     uint8_t renderedSprites = 0;
     uint8_t usedStripes = 0;
     
@@ -847,6 +903,14 @@ void renderSprites() {
         if (tyIdx > 1023) tyIdx = 1023;
 
         int32_t spriteScreenX = w_half + (w_half * tx) / ty;
+
+        uint8_t spriteStripeStep = 1;
+        if (movingLowQuality) {
+            spriteStripeStep = centerStripeStep;
+            if (sideWidth > 0 && (spriteScreenX < sideStart || spriteScreenX >= sideEnd)) {
+                spriteStripeStep = sideStripeStep;
+            }
+        }
         
         // Calculate sprite positioning like a wall would be rendered
         // First get the wall height at this distance for reference
@@ -886,7 +950,7 @@ void renderSprites() {
         if (drawStartX >= drawEndX) continue;
 
         uint8_t spriteSpanX = (uint8_t)(drawEndX - drawStartX);
-        uint8_t spriteStripes = (uint8_t)((spriteSpanX + spriteStripeStep - 1) / spriteStripeStep);
+        uint8_t spriteStripes = ceilDivByStep(spriteSpanX, spriteStripeStep);
         if (movingLowQuality) {
             if (spriteStripes == 0) continue;
             if (usedStripes >= maxStripesMoving) break;
@@ -896,10 +960,10 @@ void renderSprites() {
         renderedSprites++;
         usedStripes = (uint8_t)(usedStripes + spriteStripes);
         
-        // Precalculate stepping (avoid division in loop)
-        // 16.16 fixed point for texture coordinates
-        // texStep = (16 << 16) / size
-        int32_t texStep = 1048576L / spr_height;
+        // Precalculate stepping using existing table (avoids runtime divide)
+        // texStepValues[h].raw = (texHeight * texRepeat * 128) / h = 8192 / h
+        // sprite texStep (16.16) = (16 << 16) / h = 1048576 / h = raw << 7
+        int32_t texStep = ((int32_t)texStepValues[spr_height].GetRawVal()) << 7;
         
         // Calculate initial texture X position
         int16_t logicalStartX = (int16_t)(-spr_width / 2 + spriteScreenX);
@@ -980,7 +1044,22 @@ void renderSprites() {
                 
                 uint8_t* pixelPtr = colStartPtr;
                 int32_t texYPos = initialTexYPos;
-                bool drawPairStripe = (spriteStripeStep == 2) && (stripe + 1 < drawEndX) && (spriteDistRaw <= ZBuffer[stripe + 1]);
+                uint8_t spanWidth = spriteStripeStep;
+                if ((int16_t)(stripe + spanWidth) > drawEndX) {
+                    spanWidth = (uint8_t)(drawEndX - stripe);
+                }
+                bool spanVisible = true;
+                for (uint8_t s = 0; s < spanWidth; s++) {
+                    if (spriteDistRaw > ZBuffer[stripe + s]) {
+                        spanVisible = false;
+                        break;
+                    }
+                }
+                if (!spanVisible) {
+                    texXPos += texAdvance;
+                    colStartPtr += spriteStripeStep;
+                    continue;
+                }
                 
                 // Draw vertical stripe
                 for (int16_t y = screen_drawStartY; y < screen_drawEndY; y++) {
@@ -988,26 +1067,17 @@ void renderSprites() {
 
                     if (lastColAllOpaque) {
                         uint8_t color = sprColumnBuffer[texY];
-                        *pixelPtr = color;
-                        if (drawPairStripe) {
-                            pixelPtr[1] = color;
-                        }
+                        fillSpan(pixelPtr, spanWidth, color);
                     } else {
 #if SPRITE_HAS_OPACITY_METADATA
                         if (lastOpaqueMask & ((uint16_t)1 << texY)) {
                             uint8_t color = sprColumnBuffer[texY];
-                            *pixelPtr = color;
-                            if (drawPairStripe) {
-                                pixelPtr[1] = color;
-                            }
+                            fillSpan(pixelPtr, spanWidth, color);
                         }
 #else
                         uint8_t color = sprColumnBuffer[texY];
                         if (color != 0x21) { // Treat color 0x21 as transparent
-                            *pixelPtr = color;
-                            if (drawPairStripe) {
-                                pixelPtr[1] = color;
-                            }
+                            fillSpan(pixelPtr, spanWidth, color);
                         }
 #endif
                     }
@@ -1091,17 +1161,8 @@ void computeFloorCeiling() {
     }
 }
 
-// Plain colors used by the plain floor mode.
-void updatePlainFloorColors() {
-    uint8_t halfH = h >> 1;
-    for (uint8_t y = 0; y < halfH; y++) {
-        ceilingColors[y] = 18;
-        floorColors[y + halfH] = 24;
-    }
-}
 
 static int raycastF_NoFloorTex() {
-    updateFloorBlockForCurrentStep();
 
     FpF16<7>* rayDirXPtr = activeRayDirX;
     FpF16<7>* rayDirYPtr = activeRayDirY;
@@ -1122,7 +1183,13 @@ static int raycastF_NoFloorTex() {
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
 
-    for (zp_x = 0; zp_x < w; zp_x += currentStep) {
+    for (zp_x = 0; zp_x < w;) {
+        uint8_t rayStep = getWallRayStepAtX(zp_x);
+        uint8_t xSpan = rayStep;
+        if ((uint16_t)zp_x + xSpan > w) {
+            xSpan = (uint8_t)(w - zp_x);
+        }
+
         zp_deltaX = deltaDistXPtr[zp_x].GetRawVal();
         zp_deltaY = deltaDistYPtr[zp_x].GetRawVal();
         int16_t rDX = rayDirXPtr[zp_x].GetRawVal();
@@ -1168,10 +1235,7 @@ static int raycastF_NoFloorTex() {
             (zp_sideDistY - zp_deltaY);
 
         int16_t zVal = (rawDist < 0) ? 0 : rawDist;
-        ZBuffer[zp_x] = zVal;
-        if (currentStep == 2 && zp_x + 1 < w) {
-            ZBuffer[zp_x + 1] = zVal;
-        }
+        fillZSpan(ZBuffer, zp_x, xSpan, zVal);
 
         uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
@@ -1215,44 +1279,42 @@ static int raycastF_NoFloorTex() {
 
         if (currentStep == 2) {
             for (zp_y = 0; zp_y < drawStart; zp_y += 2) {
-                uint8_t c0 = ceilingColors[zp_y];
-                bufPtr[0] = c0; bufPtr[1] = c0;
+                uint8_t c0 = CEILING_COLOR; 
+                fillSpan(bufPtr, xSpan, c0);
                 bufPtr += w;
                 if (zp_y + 1 < drawStart) {
-                    uint8_t c1 = ceilingColors[zp_y + 1];
-                    bufPtr[0] = c1; bufPtr[1] = c1;
+                    fillSpan(bufPtr, xSpan, c0);
                     bufPtr += w;
                 }
             }
             for (zp_y = drawStart; zp_y < drawEnd; zp_y += 2) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 uint8_t color = texColumnBuffer[texY];
-                bufPtr[0] = color; bufPtr[1] = color;
+                fillSpan(bufPtr, xSpan, color);
                 bufPtr += w;
                 if (zp_y + 1 < drawEnd) {
-                    bufPtr[0] = color; bufPtr[1] = color;
+                    fillSpan(bufPtr, xSpan, color);
                     bufPtr += w;
                 }
                 raw_texPos += (raw_step << 1);
             }
             for (zp_y = drawEnd; zp_y < h; zp_y += 2) {
-                uint8_t f0 = floorColors[zp_y];
-                bufPtr[0] = f0; bufPtr[1] = f0;
+                uint8_t f0 = FLOOR_COLOR;
+                fillSpan(bufPtr, xSpan, f0);
                 bufPtr += w;
                 if (zp_y + 1 < h) {
-                    uint8_t f1 = floorColors[zp_y + 1];
-                    bufPtr[0] = f1; bufPtr[1] = f1;
+                    fillSpan(bufPtr, xSpan, f0);
                     bufPtr += w;
                 }
             }
         } else {
-            uint8_t* c_ptr = ceilingColors;
-            uint8_t* f_ptr = floorColors;
+            // uint8_t* c_ptr = ceilingColors;
+            // uint8_t* f_ptr = floorColors;
             for (zp_y = 0; zp_y < drawStart; ++zp_y) {
-                *bufPtr = *c_ptr++;
+                *bufPtr = CEILING_COLOR;
                 bufPtr += w;
             }
-            f_ptr += drawEnd;
+            // f_ptr += drawEnd;
             for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 *bufPtr = texColumnBuffer[texY];
@@ -1260,20 +1322,19 @@ static int raycastF_NoFloorTex() {
                 bufPtr += w;
             }
             for (zp_y = drawEnd; zp_y < h; ++zp_y) {
-                *bufPtr = *f_ptr++;
+                *bufPtr = FLOOR_COLOR;
                 bufPtr += w;
             }
         }
+
+        zp_x += rayStep;
+
     }
 
     renderSprites();
 
-    if (!interlacedMode) {
-        if (currentStep >= 2) {
-            drawBufferDouble_Optimized_Interlaced(false);
-        } else {
-            drawBufferDouble_Optimized();
-        }
+    if (interlacedMode) {
+        drawBufferDouble_Optimized_Interlaced(false);
     } else {
         drawBufferDouble_Optimized();
     }
@@ -1285,7 +1346,6 @@ int raycastF() {
     updateFloorBlockForCurrentStep();
 
     if (floorDisplayMode == FLOOR_MODE_PLAIN) {
-        updatePlainFloorColors();
         return raycastF_NoFloorTex();
     }
 
@@ -1313,7 +1373,13 @@ int raycastF() {
 
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
-    for (zp_x = 0; zp_x < w; zp_x += currentStep) {
+    for (zp_x = 0; zp_x < w;) {
+        uint8_t rayStep = getWallRayStepAtX(zp_x);
+        uint8_t xSpan = rayStep;
+        if ((uint16_t)zp_x + xSpan > w) {
+            xSpan = (uint8_t)(w - zp_x);
+        }
+
         // Load cached values into Zero Page registers
         zp_deltaX = deltaDistXPtr[zp_x].GetRawVal();
         zp_deltaY = deltaDistYPtr[zp_x].GetRawVal();
@@ -1366,10 +1432,7 @@ int raycastF() {
         
         // Store in ZBuffer for sprite rendering (store raw distance)
         int16_t zVal = (rawDist < 0) ? 0 : rawDist;
-        ZBuffer[zp_x] = zVal;
-        if (currentStep == 2 && zp_x + 1 < w) {
-            ZBuffer[zp_x + 1] = zVal;
-        }
+        fillZSpan(ZBuffer, zp_x, xSpan, zVal);
         
         uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
@@ -1413,30 +1476,32 @@ int raycastF() {
         if (raw_texPos < 0) raw_texPos = 0;
 
         uint8_t* bufPtr = &buffer[zp_x];
-        uint8_t xi = floorXtoTileX[zp_x];  // low-res column index
+        uint8_t xiSample = (uint8_t)(zp_x + (xSpan >> 1));
+        if (xiSample >= w) xiSample = (uint8_t)(w - 1);
+        uint8_t xi = floorXtoTileX[xiSample];  // low-res column index
 
         if (currentStep == 2) {
             for (zp_y = 0; zp_y < drawStart; zp_y += 2) {
                 uint8_t yi0 = ceilYtoTileY[zp_y];
                 uint8_t texOffset0 = floorTileRows[yi0][xi];
                 uint8_t c0 = ceilTexCache[texOffset0];
-                bufPtr[0] = c0; bufPtr[1] = c0;
+                fillSpan(bufPtr, xSpan, c0);
                 bufPtr += w;
                 if (zp_y + 1 < drawStart) {
                     uint8_t yi1 = ceilYtoTileY[zp_y + 1];
                     uint8_t texOffset1 = floorTileRows[yi1][xi];
                     uint8_t c1 = ceilTexCache[texOffset1];
-                    bufPtr[0] = c1; bufPtr[1] = c1;
+                    fillSpan(bufPtr, xSpan, c1);
                     bufPtr += w;
                 }
             }
             for (zp_y = drawStart; zp_y < drawEnd; zp_y += 2) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 uint8_t color = texColumnBuffer[texY];
-                bufPtr[0] = color; bufPtr[1] = color;
+                fillSpan(bufPtr, xSpan, color);
                 bufPtr += w;
                 if (zp_y + 1 < drawEnd) {
-                    bufPtr[0] = color; bufPtr[1] = color;
+                    fillSpan(bufPtr, xSpan, color);
                     bufPtr += w;
                 }
                 raw_texPos += (raw_step << 1);
@@ -1445,13 +1510,13 @@ int raycastF() {
                 uint8_t yi0 = floorYtoTileY[zp_y];
                 uint8_t texOffset0 = floorTileRows[yi0][xi];
                 uint8_t f0 = floorTexCache[texOffset0];
-                bufPtr[0] = f0; bufPtr[1] = f0;
+                fillSpan(bufPtr, xSpan, f0);
                 bufPtr += w;
                 if (zp_y + 1 < h) {
                     uint8_t yi1 = floorYtoTileY[zp_y + 1];
                     uint8_t texOffset1 = floorTileRows[yi1][xi];
                     uint8_t f1 = floorTexCache[texOffset1];
-                    bufPtr[0] = f1; bufPtr[1] = f1;
+                    fillSpan(bufPtr, xSpan, f1);
                     bufPtr += w;
                 }
             }
@@ -1475,6 +1540,8 @@ int raycastF() {
                 bufPtr += w;
             }
         }
+
+        zp_x += rayStep;
     }
 
     // draw_scan_line();
@@ -1482,42 +1549,19 @@ int raycastF() {
     // Render sprites to buffer after walls but before drawing to screen
     renderSprites();
     
-    // Draw buffer to screen — use interlaced during movement to halve XRAM I/O
-    if (!interlacedMode) {
-        if (currentStep >= 2) {
-            // Interlaced: draw every second line, clear skipped lines to black
-            drawBufferDouble_Optimized_Interlaced(false);
-        } else {
-            // drawBufferDouble_Optimized();
-            drawBufferDouble_Optimized_Interlaced(false);
-        }
+    // Draw buffer to screen
+    if (interlacedMode) {
+        drawBufferDouble_Optimized_Interlaced(false);
     } else {
-        // drawBufferDouble_Optimized_Interlaced(true);
         drawBufferDouble_Optimized();
     }
     
     return 0;
 }
 
-void print_map() {
-    for (int i = 0; i < mapHeight; i++) {
-        for (int j = 0; j < mapWidth; j++) {
-            switch (worldMap[i][j]) {
-                case 0: printf(" "); break;
-                case 1: printf("#"); break;
-                case 2: printf("x"); break;
-                case 3: printf("O"); break;
-                case 4: printf("."); break;
-                case 5: printf("@"); break;
-                default: printf("?"); 
-            }
-        }
-        printf("\n");
-    }
-}
-
 void draw_ui() {
   fill_rect_fast(18, startX, startY, 32, 32);
+  
 }
 
 void draw_map() {
@@ -1637,7 +1681,8 @@ void draw_player(){
 
     draw_7segment_double(GREEN, (int16_t)(fps), 270, 68);
     // draw_7segment_double(GREEN, (int16_t)(posX), 270, 68);
-    draw_7segment_double(GREEN, (int16_t)(posY), 295, 68);
+    // draw_7segment_double(GREEN, (int16_t)(posY), 295, 68);
+    draw_7segment_double(GREEN, (int16_t)(coarseSidePercent), 295, 68);
     prevPlayerX = x;
     prevPlayerY = y;
 }
@@ -1754,16 +1799,6 @@ void updateWindowSize(int8_t new_w) {
     precalculateLineHeights();
     precalculateFloorTables();
 
-    // Recalculate sky/floor colors for the new height (fallback gradients)
-    for(int i = 0; i < h / 2; i++) {
-        uint8_t sky_idx = mapValue(i, 0, h / 2, 30, 20);
-        ceilingColors[i] = sky_idx;
-        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 28); 
-        floorColors[i + (h / 2)] = floor_idx;
-    }
-
-    printf("Window resized: w=%d, h=%d\n", w, h);
-    
     gamestate = GAMESTATE_MOVING;
 }
 
@@ -1772,14 +1807,9 @@ int16_t main() {
     uint8_t timer = 0;
     bool scan_key_latch = false;
     bool t_key_latch = false;
-
-    for(int i = 0; i < h / 2; i++) {
-        // uint8_t sky_idx = mapValue(i, 0, h / 2, 16, 31);
-        uint8_t sky_idx = mapValue(i, 0, h / 2, 30, 20);
-        ceilingColors[i] = sky_idx;
-        uint8_t floor_idx = mapValue(i, 0, h / 2, 16, 28); 
-        floorColors[i + (h / 2)] = floor_idx;
-    }
+    bool q_key_latch = false;
+    bool e_key_latch = false;
+    bool m_key_latch = false;
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));
     prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));
@@ -1788,12 +1818,10 @@ int16_t main() {
 
     initializeMaze();
 
-    printf("generating maze...\n");
     srand(4);
     int startPosX = (random(1, ((mapWidth - 2) / 2)) * 2 + 1);
     int startPoxY = (random(1, ((mapHeight - 2) / 2)) * 2 + 1);
 
-    printf("startX: %i, startY: %i\n", startX, startY);
     iterativeDFS(startPosX, startPoxY);
     setEntryAndFinish(startPosX, startPoxY);
 
@@ -1804,7 +1832,6 @@ int16_t main() {
 
     placeSprites();
 
-    printf("Precalculating values...\n");
     precalculateRotations();
     precalculateLineHeights();
     precalculateFloorTables();
@@ -1909,16 +1936,41 @@ int16_t main() {
                     if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
                     if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
-                if (key(KEY_M)) {
+                bool m_down = key(KEY_M);
+                if (m_down && !m_key_latch) {
                     interlacedMode = !interlacedMode;
-                    fillBuffer(BLACK);
+                    if (interlacedMode) {
+                        fillBuffer(BLACK);
+                    }
                     draw_ui();
                 }
+                m_key_latch = m_down;
                 bool t_down = key(KEY_T);
                 if (t_down && !t_key_latch) {
                     floorDisplayMode = (uint8_t)((floorDisplayMode + 1) % 2);
                 }
                 t_key_latch = t_down;
+
+                bool q_down = key(KEY_Q);
+                if (q_down && !q_key_latch) {
+                    if (coarseSidePercent >= 5) {
+                        coarseSidePercent = (uint8_t)(coarseSidePercent - 5);
+                    } else {
+                        coarseSidePercent = 0;
+                    }
+                }
+                q_key_latch = q_down;
+
+                bool e_down = key(KEY_E);
+                if (e_down && !e_key_latch) {
+                    if (coarseSidePercent <= 45) {
+                        coarseSidePercent = (uint8_t)(coarseSidePercent + 5);
+                    } else {
+                        coarseSidePercent = 50;
+                    }
+                }
+                e_key_latch = e_down;
+
                 if (key(KEY_S)) {
                     render_sprites = !render_sprites;
                 }
@@ -1938,7 +1990,6 @@ int16_t main() {
             } else {
                 if (timer < 2) timer++;
                 if (timer == 2 && currentStep > 1) {
-                    printf("Switching to full resolution\n");
                     currentStep = 1;
                 }
             }
