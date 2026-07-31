@@ -1,5 +1,4 @@
 #include <rp6502.h>
-#define RIA_SCALE (*(volatile uint8_t*)0xFFE3)
 #define RIA_RWH   (*(volatile uint8_t*)0xFFED)
 #define RIA_RWD   (*(volatile uint8_t*)0xFFEE)
 #include <stdio.h>
@@ -519,7 +518,7 @@ void drawBufferDouble_Optimized() {
         RIA.addr1 = screen_addr + SCREEN_WIDTH;
         uint8_t* p = buffer_ptr_loc;
         if (!coarseX) {
-            RIA_SCALE = 2;
+            RIA.step0 = 2;
             for (uint8_t i = 0; i < blocks; ++i) {
                 #define PUSH_PIXEL \
                     { \
@@ -530,7 +529,7 @@ void drawBufferDouble_Optimized() {
                 #undef PUSH_PIXEL
             }
         } else {
-            RIA_SCALE = 4;
+            RIA.step0 = 4;
             const uint8_t pairBlocks = w >> 4;
             for (uint8_t i = 0; i < pairBlocks; ++i) {
                 #define PUSH_PIXEL_PAIR \
@@ -567,7 +566,7 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
         RIA.addr0 = screen_addr;
         uint8_t* p = buffer_ptr_loc;
         if (!coarseX) {
-            RIA_SCALE = 2;
+            RIA.step0 = 2;
             for (uint8_t i = 0; i < blocks; ++i) {
                 #define PUSH_PIXEL \
                     { \
@@ -578,7 +577,7 @@ void drawBufferDouble_Optimized_Interlaced(bool oddField) {
                 #undef PUSH_PIXEL
             }
         } else {
-            RIA_SCALE = 4;
+            RIA.step0 = 4;
             const uint8_t pairBlocks = w >> 4;
             for (uint8_t i = 0; i < pairBlocks; ++i) {
                 #define PUSH_PIXEL_PAIR \
