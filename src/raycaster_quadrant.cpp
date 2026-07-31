@@ -65,6 +65,7 @@ uint16_t startX = 285;
 uint16_t startY = 94;
 
 uint16_t prevPlayerX, prevPlayerY;
+bool prevPlayerDotValid = false;
 
 const uint8_t SCAN_FRAMES = 120;
 const uint8_t SCAN_DECAY_MAX = 80;
@@ -89,6 +90,11 @@ uint8_t yOffset = ((SCREEN_HEIGHT - h * 2) / 2) - 20;
 
 uint8_t fps = 0;
 bool interlacedMode = false;
+bool overlayUpdatesEnabled = true;
+bool needleNeedsUpdate = true;
+bool movingWallShadingEnabled = false;
+uint8_t profileRaycastTicks = 0;
+uint8_t profileBlitTicks = 0;
 
 // Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
 const uint8_t texRepeat = 4;
@@ -134,24 +140,50 @@ uint8_t* floorTileRows[FLOOR_MAX_ROWS];
 
 bool floorRowSkipEnabled = true; // toggle aggressive row skipping while moving
 
-static inline uint8_t getWallRayStepAtX(uint8_t x) {
-    if (currentStep < 2) return 1;
+uint8_t wallCenterStep = 1;
+uint8_t wallSideStep = 1;
+uint8_t wallSideWidth = 0;
+uint8_t wallSideStart = 0;
+uint8_t wallSideEnd = 0;
+bool wallUseSideStep = false;
 
-    uint8_t centerStep = (movementStep > 0) ? (uint8_t)movementStep : 1;
-    if (centerStep > 4) centerStep = 4;
-    uint8_t sideStep = (coarseRayStep >= centerStep) ? coarseRayStep : centerStep;
-    if (sideStep > 4) sideStep = 4;
-    if (coarseSidePercent == 0 || sideStep == centerStep) return centerStep;
+static inline void updateWallStepParams() {
+    if (currentStep < 2) {
+        wallCenterStep = 1;
+        wallSideStep = 1;
+        wallSideWidth = 0;
+        wallSideStart = 0;
+        wallSideEnd = w;
+        wallUseSideStep = false;
+        return;
+    }
+
+    wallCenterStep = (movementStep > 0) ? (uint8_t)movementStep : 1;
+    if (wallCenterStep > 4) wallCenterStep = 4;
+    wallSideStep = (coarseRayStep >= wallCenterStep) ? coarseRayStep : wallCenterStep;
+    if (wallSideStep > 4) wallSideStep = 4;
+
+    wallUseSideStep = false;
+    wallSideWidth = 0;
+    wallSideStart = 0;
+    wallSideEnd = w;
+
+    if (coarseSidePercent == 0 || wallSideStep == wallCenterStep) return;
 
     uint16_t sideWidth16 = ((uint16_t)w * (uint16_t)coarseSidePercent) / 100;
     if (sideWidth16 > (w >> 1)) sideWidth16 = (w >> 1);
-    uint8_t sideWidth = (uint8_t)sideWidth16;
-    if (sideWidth == 0) return centerStep;
+    wallSideWidth = (uint8_t)sideWidth16;
+    if (wallSideWidth == 0) return;
 
-    if (x < sideWidth || x >= (uint8_t)(w - sideWidth)) {
-        return sideStep;
-    }
-    return centerStep;
+    wallSideStart = wallSideWidth;
+    wallSideEnd = (uint8_t)(w - wallSideWidth);
+    wallUseSideStep = true;
+}
+
+static inline uint8_t getWallRayStepAtX(uint8_t x) {
+    if (!wallUseSideStep) return wallCenterStep;
+    if (x < wallSideStart || x >= wallSideEnd) return wallSideStep;
+    return wallCenterStep;
 }
 
 static inline void fillSpan(uint8_t* dst, uint8_t span, uint8_t value) {
@@ -159,6 +191,34 @@ static inline void fillSpan(uint8_t* dst, uint8_t span, uint8_t value) {
     if (span > 1) dst[1] = value;
     if (span > 2) dst[2] = value;
     if (span > 3) dst[3] = value;
+}
+
+static inline void fillRowColor(uint8_t* dst, uint8_t color) {
+    const uint8_t blocks = w >> 3;
+    for (uint8_t i = 0; i < blocks; ++i) {
+        dst[0] = color;
+        dst[1] = color;
+        dst[2] = color;
+        dst[3] = color;
+        dst[4] = color;
+        dst[5] = color;
+        dst[6] = color;
+        dst[7] = color;
+        dst += 8;
+    }
+}
+
+static inline void prefillPlainCeilingFloor() {
+    uint8_t* rowPtr = buffer;
+    const uint8_t halfHLocal = h >> 1;
+    for (uint8_t y = 0; y < halfHLocal; ++y) {
+        fillRowColor(rowPtr, CEILING_COLOR);
+        rowPtr += w;
+    }
+    for (uint8_t y = halfHLocal; y < h; ++y) {
+        fillRowColor(rowPtr, FLOOR_COLOR);
+        rowPtr += w;
+    }
 }
 
 static inline void fillZSpan(int16_t* zbuf, uint8_t x, uint8_t span, int16_t value) {
@@ -262,6 +322,9 @@ bool invDetValid = false;
 int16_t texOffsetTable[256]; 
 uint8_t texColumnBuffer[16]; 
 uint8_t sprColumnBuffer[16]; // Buffer for sprite column data
+uint8_t wallTexColumnCache[NUM_TEXTURES][texWidth * texHeight];
+uint8_t wallTexAvgColor[NUM_TEXTURES];
+bool wallTexCacheReady = false;
 
 // values for sprite rotation
 static const int16_t sin_fix8_32[] = {
@@ -384,6 +447,61 @@ static uint16_t isqrt16(uint16_t value) {
     }
 
     return result;
+}
+
+static void buildWallTexCache() {
+    if (wallTexCacheReady) return;
+
+    for (uint8_t texNum = 0; texNum < NUM_TEXTURES; texNum++) {
+        uint16_t sum = 0;
+        for (uint8_t texX = 0; texX < texWidth; texX++) {
+            uint16_t base = (uint16_t)texX * texHeight;
+            for (uint8_t texY = 0; texY < texHeight; texY++) {
+                uint8_t texel = getTexturePixel(texNum, ((uint16_t)texY << 4) + texX);
+                wallTexColumnCache[texNum][base + texY] = texel;
+                sum += texel;
+            }
+        }
+        wallTexAvgColor[texNum] = (uint8_t)(sum >> 8);
+    }
+
+    wallTexCacheReady = true;
+}
+
+static inline uint8_t shadeColorDistance(uint8_t baseColor, int16_t rawDist, uint8_t side) {
+    int16_t shade = rawDist >> 7;
+    if (shade > 24) shade = 24;
+    if (shade < 0) shade = 0;
+
+    int16_t color = (int16_t)baseColor - shade;
+    if (side) color -= 3;
+    if (color < 0) color = 0;
+    return (uint8_t)color;
+}
+
+static inline void fetchTextureColumnCached(uint8_t texNum, uint8_t texX) {
+    if (!wallTexCacheReady) {
+        fetchTextureColumn(texNum, texX);
+        return;
+    }
+
+    const uint8_t* src = &wallTexColumnCache[texNum][(uint16_t)texX * texHeight];
+    texColumnBuffer[0] = src[0];
+    texColumnBuffer[1] = src[1];
+    texColumnBuffer[2] = src[2];
+    texColumnBuffer[3] = src[3];
+    texColumnBuffer[4] = src[4];
+    texColumnBuffer[5] = src[5];
+    texColumnBuffer[6] = src[6];
+    texColumnBuffer[7] = src[7];
+    texColumnBuffer[8] = src[8];
+    texColumnBuffer[9] = src[9];
+    texColumnBuffer[10] = src[10];
+    texColumnBuffer[11] = src[11];
+    texColumnBuffer[12] = src[12];
+    texColumnBuffer[13] = src[13];
+    texColumnBuffer[14] = src[14];
+    texColumnBuffer[15] = src[15];
 }
 
 
@@ -1164,6 +1282,8 @@ void computeFloorCeiling() {
 
 static int raycastF_NoFloorTex() {
 
+    uint16_t raycastStartClock = ria_call_int(RIA_OP_CLOCK);
+
     FpF16<7>* rayDirXPtr = activeRayDirX;
     FpF16<7>* rayDirYPtr = activeRayDirY;
     FpF16<7>* deltaDistXPtr = activeDeltaDistX;
@@ -1182,6 +1302,10 @@ static int raycastF_NoFloorTex() {
 
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
+    const bool writeZ = render_sprites;
+
+    prefillPlainCeilingFloor();
+    updateWallStepParams();
 
     for (zp_x = 0; zp_x < w;) {
         uint8_t rayStep = getWallRayStepAtX(zp_x);
@@ -1199,22 +1323,16 @@ static int raycastF_NoFloorTex() {
         zp_mapY = mapY_start;
 
         uint8_t mapOffset = (zp_mapY << 4) + zp_mapX;
-        int8_t mapStepX;
-        int8_t mapStepY;
-
+        int8_t mapStepX = (rDX < 0) ? -1 : 1;
+        int8_t mapStepY = (rDY < 0) ? -16 : 16;
         if (rDX < 0) {
-            mapStepX = -1;
             zp_sideDistX = mulFrac7Fast(zp_deltaX, fracX);
         } else {
-            mapStepX = 1;
             zp_sideDistX = mulFrac7Fast(zp_deltaX, invFracX);
         }
-
         if (rDY < 0) {
-            mapStepY = -16;
             zp_sideDistY = mulFrac7Fast(zp_deltaY, fracY);
         } else {
-            mapStepY = 16;
             zp_sideDistY = mulFrac7Fast(zp_deltaY, invFracY);
         }
 
@@ -1234,8 +1352,10 @@ static int raycastF_NoFloorTex() {
             (zp_sideDistX - zp_deltaX) :
             (zp_sideDistY - zp_deltaY);
 
-        int16_t zVal = (rawDist < 0) ? 0 : rawDist;
-        fillZSpan(ZBuffer, zp_x, xSpan, zVal);
+        if (writeZ) {
+            int16_t zVal = (rawDist < 0) ? 0 : rawDist;
+            fillZSpan(ZBuffer, zp_x, xSpan, zVal);
+        }
 
         uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
@@ -1252,77 +1372,71 @@ static int raycastF_NoFloorTex() {
         uint16_t drawEnd = drawStart + lineHeight;
         if (drawEnd > h) drawEnd = h;
 
-        int16_t wallRaw;
-        if (zp_side == 0) {
-            wallRaw = posYRaw + (int16_t)(((int32_t)rawDist * rDY) >> 7);
+        const bool useMovingShading = movingWallShadingEnabled && (currentStep == 2);
+        uint8_t shadeColor = 0;
+        int16_t raw_step = 0;
+        int16_t raw_texPos = 0;
+
+        if (useMovingShading) {
+            uint8_t baseColor = wallTexCacheReady ? wallTexAvgColor[texNum] : (uint8_t)(32 + (texNum << 5));
+            shadeColor = shadeColorDistance(baseColor, rawDist, zp_side);
         } else {
-            wallRaw = posXRaw + (int16_t)(((int32_t)rawDist * rDX) >> 7);
+            int16_t wallRaw;
+            if (zp_side == 0) {
+                wallRaw = posYRaw + (int16_t)(((int32_t)rawDist * rDY) >> 7);
+            } else {
+                wallRaw = posXRaw + (int16_t)(((int32_t)rawDist * rDX) >> 7);
+            }
+
+            uint8_t frac7 = wallRaw & 0x7F;
+            int texX = (frac7 >> 1) & 0x0F;
+            if (zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
+            if (zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
+
+            if (texNum != lastTexNum || texX != lastTexX) {
+                fetchTextureColumnCached(texNum, (uint8_t)texX);
+                lastTexNum = texNum;
+                lastTexX = texX;
+            }
+
+            raw_step = texStepValues[lineHeight].GetRawVal();
+            raw_texPos = (lineHeight > h) ?
+                texOffsetTable[lineHeight] : 0;
+            if (raw_texPos < 0) raw_texPos = 0;
         }
 
-        uint8_t frac7 = wallRaw & 0x7F;
-        int texX = (frac7 >> 1) & 0x0F;
-        if (zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
-        if (zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
-
-        if (texNum != lastTexNum || texX != lastTexX) {
-            fetchTextureColumn(texNum, texX);
-            lastTexNum = texNum;
-            lastTexX = texX;
-        }
-
-        int16_t raw_step = texStepValues[lineHeight].GetRawVal();
-        int16_t raw_texPos = (lineHeight > h) ?
-            texOffsetTable[lineHeight] : 0;
-        if (raw_texPos < 0) raw_texPos = 0;
-
-        uint8_t* bufPtr = &buffer[zp_x];
+        uint8_t drawStartY = (uint8_t)drawStart;
+        uint8_t drawEndY = (uint8_t)drawEnd;
+        uint8_t* bufPtr = &buffer[(uint16_t)drawStartY * w + zp_x];
 
         if (currentStep == 2) {
-            for (zp_y = 0; zp_y < drawStart; zp_y += 2) {
-                uint8_t c0 = CEILING_COLOR; 
-                fillSpan(bufPtr, xSpan, c0);
-                bufPtr += w;
-                if (zp_y + 1 < drawStart) {
-                    fillSpan(bufPtr, xSpan, c0);
+            if (useMovingShading) {
+                for (zp_y = drawStartY; zp_y < drawEndY; zp_y += 2) {
+                    fillSpan(bufPtr, xSpan, shadeColor);
                     bufPtr += w;
+                    if (zp_y + 1 < drawEndY) {
+                        fillSpan(bufPtr, xSpan, shadeColor);
+                        bufPtr += w;
+                    }
                 }
-            }
-            for (zp_y = drawStart; zp_y < drawEnd; zp_y += 2) {
-                uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
-                uint8_t color = texColumnBuffer[texY];
-                fillSpan(bufPtr, xSpan, color);
-                bufPtr += w;
-                if (zp_y + 1 < drawEnd) {
+            } else {
+                for (zp_y = drawStartY; zp_y < drawEndY; zp_y += 2) {
+                    uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
+                    uint8_t color = texColumnBuffer[texY];
                     fillSpan(bufPtr, xSpan, color);
                     bufPtr += w;
-                }
-                raw_texPos += (raw_step << 1);
-            }
-            for (zp_y = drawEnd; zp_y < h; zp_y += 2) {
-                uint8_t f0 = FLOOR_COLOR;
-                fillSpan(bufPtr, xSpan, f0);
-                bufPtr += w;
-                if (zp_y + 1 < h) {
-                    fillSpan(bufPtr, xSpan, f0);
-                    bufPtr += w;
+                    if (zp_y + 1 < drawEndY) {
+                        fillSpan(bufPtr, xSpan, color);
+                        bufPtr += w;
+                    }
+                    raw_texPos += (raw_step << 1);
                 }
             }
         } else {
-            // uint8_t* c_ptr = ceilingColors;
-            // uint8_t* f_ptr = floorColors;
-            for (zp_y = 0; zp_y < drawStart; ++zp_y) {
-                *bufPtr = CEILING_COLOR;
-                bufPtr += w;
-            }
-            // f_ptr += drawEnd;
-            for (zp_y = drawStart; zp_y < drawEnd; ++zp_y) {
+            for (zp_y = drawStartY; zp_y < drawEndY; ++zp_y) {
                 uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
                 *bufPtr = texColumnBuffer[texY];
                 raw_texPos += raw_step;
-                bufPtr += w;
-            }
-            for (zp_y = drawEnd; zp_y < h; ++zp_y) {
-                *bufPtr = FLOOR_COLOR;
                 bufPtr += w;
             }
         }
@@ -1331,13 +1445,19 @@ static int raycastF_NoFloorTex() {
 
     }
 
+    uint16_t raycastEndClock = ria_call_int(RIA_OP_CLOCK);
+    profileRaycastTicks = (uint8_t)(raycastEndClock - raycastStartClock);
+
     renderSprites();
 
+    uint16_t blitStartClock = ria_call_int(RIA_OP_CLOCK);
     if (interlacedMode) {
         drawBufferDouble_Optimized_Interlaced(false);
     } else {
         drawBufferDouble_Optimized();
     }
+    uint16_t blitEndClock = ria_call_int(RIA_OP_CLOCK);
+    profileBlitTicks = (uint8_t)(blitEndClock - blitStartClock);
 
     return 0;
 }
@@ -1348,6 +1468,8 @@ int raycastF() {
     if (floorDisplayMode == FLOOR_MODE_PLAIN) {
         return raycastF_NoFloorTex();
     }
+
+    uint16_t raycastStartClock = ria_call_int(RIA_OP_CLOCK);
 
     // Pre-compute low-res floor/ceiling tile maps for this frame
     computeFloorCeiling();
@@ -1373,6 +1495,8 @@ int raycastF() {
 
     uint8_t lastTexNum = 0xFF;
     uint8_t lastTexX = 0xFF;
+    const bool writeZ = render_sprites;
+    updateWallStepParams();
     for (zp_x = 0; zp_x < w;) {
         uint8_t rayStep = getWallRayStepAtX(zp_x);
         uint8_t xSpan = rayStep;
@@ -1391,23 +1515,17 @@ int raycastF() {
         
         // Flattened map access optimization (mapWidth=16)
         uint8_t mapOffset = (zp_mapY << 4) + zp_mapX;
-        int8_t mapStepX; 
-        int8_t mapStepY;
-
-        // 3. FAST SideDist Calculation
+        int8_t mapStepX = (rDX < 0) ? -1 : 1;
+        int8_t mapStepY = (rDY < 0) ? -16 : 16;
         if(rDX < 0) {
-            mapStepX = -1;
             zp_sideDistX = mulFrac7Fast(zp_deltaX, fracX);
         } else {
-            mapStepX = 1;
             zp_sideDistX = mulFrac7Fast(zp_deltaX, invFracX);
         }
-        
+
         if(rDY < 0) {
-            mapStepY = -16; // -mapWidth
             zp_sideDistY = mulFrac7Fast(zp_deltaY, fracY);
         } else {
-            mapStepY = 16; // +mapWidth
             zp_sideDistY = mulFrac7Fast(zp_deltaY, invFracY);
         }
         
@@ -1431,8 +1549,10 @@ int raycastF() {
             (zp_sideDistY - zp_deltaY);
         
         // Store in ZBuffer for sprite rendering (store raw distance)
-        int16_t zVal = (rawDist < 0) ? 0 : rawDist;
-        fillZSpan(ZBuffer, zp_x, xSpan, zVal);
+        if (writeZ) {
+            int16_t zVal = (rawDist < 0) ? 0 : rawDist;
+            fillZSpan(ZBuffer, zp_x, xSpan, zVal);
+        }
         
         uint16_t lineHeight;
         if (rawDist >= 0 && rawDist < 1024) {
@@ -1449,31 +1569,42 @@ int raycastF() {
         uint16_t drawEnd = drawStart + lineHeight;
         if (drawEnd > h) drawEnd = h;
 
-        // Wall X calculation using raw int16 arithmetic (avoids 3 FpF multiplies)
-        int16_t wallRaw;
-        if (zp_side == 0) {
-            wallRaw = posYRaw + (int16_t)(((int32_t)rawDist * rDY) >> 7);
-        } else {
-            wallRaw = posXRaw + (int16_t)(((int32_t)rawDist * rDX) >> 7);
-        }
-        // Extract 7-bit fractional part, scale by texRepeat*texWidth=64 (<<6), then >>7 = >>1
-        // Result is 0..63, mask to texWidth with & 0x0F
-        uint8_t frac7 = wallRaw & 0x7F;
-        int texX = (frac7 >> 1) & 0x0F;
-        if(zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
-        if(zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
+        const bool useMovingShading = movingWallShadingEnabled && (currentStep == 2);
+        uint8_t shadeColor = 0;
 
-        if (texNum != lastTexNum || texX != lastTexX) {
-            fetchTextureColumn(texNum, texX);
-            lastTexNum = texNum;
-            lastTexX = texX;
+        int16_t raw_step = 0;
+        int16_t raw_texPos = 0;
+
+        if (useMovingShading) {
+            uint8_t baseColor = wallTexCacheReady ? wallTexAvgColor[texNum] : (uint8_t)(32 + (texNum << 5));
+            shadeColor = shadeColorDistance(baseColor, rawDist, zp_side);
+        } else {
+            // Wall X calculation using raw int16 arithmetic (avoids 3 FpF multiplies)
+            int16_t wallRaw;
+            if (zp_side == 0) {
+                wallRaw = posYRaw + (int16_t)(((int32_t)rawDist * rDY) >> 7);
+            } else {
+                wallRaw = posXRaw + (int16_t)(((int32_t)rawDist * rDX) >> 7);
+            }
+            // Extract 7-bit fractional part, scale by texRepeat*texWidth=64 (<<6), then >>7 = >>1
+            // Result is 0..63, mask to texWidth with & 0x0F
+            uint8_t frac7 = wallRaw & 0x7F;
+            int texX = (frac7 >> 1) & 0x0F;
+            if(zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
+            if(zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
+
+            if (texNum != lastTexNum || texX != lastTexX) {
+                fetchTextureColumnCached(texNum, (uint8_t)texX);
+                lastTexNum = texNum;
+                lastTexX = texX;
+            }
+
+            // Use precomputed table for all lineHeight values (no runtime division)
+            raw_step = texStepValues[lineHeight].GetRawVal();
+            raw_texPos = (lineHeight > h) ?
+                texOffsetTable[lineHeight] : 0;
+            if (raw_texPos < 0) raw_texPos = 0;
         }
-        
-        // Use precomputed table for all lineHeight values (no runtime division)
-        int16_t raw_step = texStepValues[lineHeight].GetRawVal();
-        int16_t raw_texPos = (lineHeight > h) ? 
-            texOffsetTable[lineHeight] : 0;
-        if (raw_texPos < 0) raw_texPos = 0;
 
         uint8_t* bufPtr = &buffer[zp_x];
         uint8_t xiSample = (uint8_t)(zp_x + (xSpan >> 1));
@@ -1496,15 +1627,20 @@ int raycastF() {
                 }
             }
             for (zp_y = drawStart; zp_y < drawEnd; zp_y += 2) {
-                uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
-                uint8_t color = texColumnBuffer[texY];
+                uint8_t color;
+                if (useMovingShading) {
+                    color = shadeColor;
+                } else {
+                    uint8_t texY = (raw_texPos >> 7) & (texHeight - 1);
+                    color = texColumnBuffer[texY];
+                    raw_texPos += (raw_step << 1);
+                }
                 fillSpan(bufPtr, xSpan, color);
                 bufPtr += w;
                 if (zp_y + 1 < drawEnd) {
                     fillSpan(bufPtr, xSpan, color);
                     bufPtr += w;
                 }
-                raw_texPos += (raw_step << 1);
             }
             for (zp_y = drawEnd; zp_y < h; zp_y += 2) {
                 uint8_t yi0 = floorYtoTileY[zp_y];
@@ -1544,17 +1680,23 @@ int raycastF() {
         zp_x += rayStep;
     }
 
+    uint16_t raycastEndClock = ria_call_int(RIA_OP_CLOCK);
+    profileRaycastTicks = (uint8_t)(raycastEndClock - raycastStartClock);
+
     // draw_scan_line();
     
     // Render sprites to buffer after walls but before drawing to screen
     renderSprites();
     
     // Draw buffer to screen
+    uint16_t blitStartClock = ria_call_int(RIA_OP_CLOCK);
     if (interlacedMode) {
         drawBufferDouble_Optimized_Interlaced(false);
     } else {
         drawBufferDouble_Optimized();
     }
+    uint16_t blitEndClock = ria_call_int(RIA_OP_CLOCK);
+    profileBlitTicks = (uint8_t)(blitEndClock - blitStartClock);
     
     return 0;
 }
@@ -1667,7 +1809,7 @@ void draw_needle() {
 }
 
 
-void draw_player(){
+void draw_player(bool drawHud){
     if (!map_visible) {
         return;
     }
@@ -1675,21 +1817,29 @@ void draw_player(){
     FpF16<7> ts(2);
     uint16_t x = (int)(posX * ts) + startX;
     uint16_t y = (int)(posY * ts) + startY;
-    
-    fill_rect_fast(DARK_GREEN, prevPlayerX, prevPlayerY, 2, 2);
+
+    if (prevPlayerDotValid) {
+        fill_rect_fast(DARK_GREEN, prevPlayerX, prevPlayerY, 2, 2);
+    }
     fill_rect_fast(YELLOW, x, y, 2, 2);
 
-    draw_7segment_double(GREEN, (int16_t)(fps), 270, 68);
-    // draw_7segment_double(GREEN, (int16_t)(posX), 270, 68);
-    // draw_7segment_double(GREEN, (int16_t)(posY), 295, 68);
-    draw_7segment_double(GREEN, (int16_t)(coarseSidePercent), 295, 68);
+    if (drawHud) {
+        draw_7segment_double(GREEN, (int16_t)(fps), 270, 68);
+        draw_7segment_double(GREEN, (int16_t)(coarseSidePercent), 295, 68);
+        draw_7segment_double(GREEN, (int16_t)(profileRaycastTicks), 270, 80);
+        draw_7segment_double(GREEN, (int16_t)(profileBlitTicks), 295, 80);
+    }
     prevPlayerX = x;
     prevPlayerY = y;
+    prevPlayerDotValid = true;
 }
 
 void handleCalculation() {
     gamestate = GAMESTATE_CALCULATING;
-    draw_needle();
+    if (overlayUpdatesEnabled && needleNeedsUpdate) {
+        draw_needle();
+        needleNeedsUpdate = false;
+    }
     raycastF();
     gamestate = GAMESTATE_IDLE;
 }
@@ -1798,6 +1948,7 @@ void updateWindowSize(int8_t new_w) {
     precalculateRotations();
     precalculateLineHeights();
     precalculateFloorTables();
+    buildWallTexCache();
 
     gamestate = GAMESTATE_MOVING;
 }
@@ -1805,11 +1956,14 @@ void updateWindowSize(int8_t new_w) {
 int16_t main() {
     bool paused = false;
     uint8_t timer = 0;
+    bool movingFrame = false;
     bool scan_key_latch = false;
     bool t_key_latch = false;
     bool q_key_latch = false;
     bool e_key_latch = false;
     bool m_key_latch = false;
+    bool f_key_latch = false;
+    bool g_key_latch = false;
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));
     prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));
@@ -1898,11 +2052,13 @@ int16_t main() {
                     gamestate = GAMESTATE_MOVING;
                     currentRotStep = (currentRotStep + rotateStep) % ROTATION_STEPS;
                     updateRaycasterVectors();
+                    needleNeedsUpdate = true;
                 }
                 if (key(KEY_LEFT)){
                     gamestate = GAMESTATE_MOVING;
                     currentRotStep = (currentRotStep - rotateStep + ROTATION_STEPS) % ROTATION_STEPS;
                     updateRaycasterVectors();
+                    needleNeedsUpdate = true;
                 }
                 if (key(KEY_UP)) {
                     gamestate = GAMESTATE_MOVING;
@@ -1951,6 +2107,22 @@ int16_t main() {
                 }
                 t_key_latch = t_down;
 
+                bool f_down = key(KEY_F);
+                if (f_down && !f_key_latch) {
+                    overlayUpdatesEnabled = !overlayUpdatesEnabled;
+                    if (overlayUpdatesEnabled) {
+                        draw_ui();
+                        needleNeedsUpdate = true;
+                    }
+                }
+                f_key_latch = f_down;
+
+                bool g_down = key(KEY_G);
+                if (g_down && !g_key_latch) {
+                    movingWallShadingEnabled = !movingWallShadingEnabled;
+                }
+                g_key_latch = g_down;
+
                 bool q_down = key(KEY_Q);
                 if (q_down && !q_key_latch) {
                     if (coarseSidePercent >= 5) {
@@ -1984,7 +2156,9 @@ int16_t main() {
 
         }
         if (!paused && !scan_active) {
+            movingFrame = false;
             if (gamestate == GAMESTATE_MOVING) {
+                movingFrame = true;
                 currentStep = movementStep;
                 timer = 0;
             } else {
@@ -1996,10 +2170,18 @@ int16_t main() {
             handleCalculation();
         }
 
-
-        map_visible = true;
-            draw_map();
-            draw_player();
+        if (overlayUpdatesEnabled) {
+            map_visible = true;
+            if (movingFrame) {
+                draw_player(false);
+            } else {
+                draw_map();
+                draw_player(true);
+            }
+        } else {
+            map_visible = false;
+            prevPlayerDotValid = false;
+        }
         if (scan_active) {
             for (uint8_t y = 0; y < mapHeight; y++) {
                 for (uint8_t x = 0; x < mapWidth; x++) {

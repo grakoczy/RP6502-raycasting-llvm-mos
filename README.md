@@ -32,6 +32,8 @@ Follow istructions found here: [vscode-llvm-mos](https://github.com/picocomputer
 | **M** | Toggle Interlaced Mode |
 | **T** | Toggle Floor/Ceiling Textures |
 | **S** | Toggle Sprite Rendering |
+| **F** | Toggle Overlay Updates (Map + Needle) |
+| **G** | Toggle Moving Wall Shading |
 | **Esc** | Exit Demo |
 
 ## 📝 Author
