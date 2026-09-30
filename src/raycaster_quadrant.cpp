@@ -1,15 +1,7 @@
 #include <rp6502.h>
-#define RIA_RWH   (*(volatile uint8_t*)0xFFED)
-#define RIA_RWD   (*(volatile uint8_t*)0xFFEE)
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <stdint.h>
-#include <inttypes.h>
-extern "C" {
-    #include <unistd.h>
-    #include <fcntl.h>
-}
 #include "colors.h"
 #include "usb_hid_keys.h"
 #include "bitmap_graphics.hpp"
@@ -19,18 +11,7 @@ extern "C" {
 #include "maze.h"
 #include "palette.h"
 
-// Declare C functions for C++ linkage
-extern "C" {
-    int open(const char* filename, int flags, ...);
-    int close(int fd);
-    long lseek(int fd, long offset, int whence);
-    int read_xram(unsigned address, unsigned count, int fd);
-}
-
 __attribute__((section(".zp.bss"))) static uint8_t zp_x;
-__attribute__((section(".zp.bss"))) static uint8_t zp_y;
-__attribute__((section(".zp.bss"))) static uint8_t zp_mapX;
-__attribute__((section(".zp.bss"))) static uint8_t zp_mapY;
 __attribute__((section(".zp.bss"))) static uint8_t zp_side;
 __attribute__((section(".zp.bss"))) static int16_t zp_sideDistX;
 __attribute__((section(".zp.bss"))) static int16_t zp_sideDistY;
@@ -63,8 +44,6 @@ FpF16<7> playerScale(5);
 FpF16<7> sin_r(0.19509032201); 
 FpF16<7> cos_r(0.9807852804); 
 
-// uint16_t startX = 151+mapWidth/2;
-// uint16_t startY = 137+mapHeight/2;
 uint16_t startX = 285;
 uint16_t startY = 94;
 
@@ -90,7 +69,6 @@ static constexpr uint8_t xOffset = 9;
 static constexpr uint8_t yOffset = 5;
 
 uint8_t fps = 0;
-bool interlacedMode = false;
 bool overlayUpdatesEnabled = true;
 bool needleNeedsUpdate = true;
 bool movingWallShadingEnabled = false;
@@ -322,13 +300,9 @@ bool render_sprites = true; // toggle sprite rendering
 
 
 
-bool gamestate_changed = true;
-uint8_t gamestate = 1;  
-uint8_t gamestate_prev = 1;
-#define GAMESTATE_INIT 0
 #define GAMESTATE_IDLE 1
 #define GAMESTATE_MOVING 2
-#define GAMESTATE_CALCULATING 3
+uint8_t gamestate = GAMESTATE_IDLE;
 
 uint8_t lineHeightTable[1024]; 
 
@@ -403,14 +377,10 @@ static const int16_t t2_fix8_32[] = {
 
 uint8_t currentRotStep = 0; 
 
-FpF16<7> invW;
-FpF16<7> halfH(h / 2);
-
 #define NEEDLE_SPRITE_ADDR 0xF100  // Sprite data (2048 bytes)
 #define PALETTE_XRAM_ADDR 0xF900   // After sprite (0xF100 + 2048 = 0xF900)
 #define NEEDLE_CONFIG_ADDR 0xFB00  // After palette (0xF900 + 512 = 0xFB00)
 #define NEEDLE_SIZE 32                  // pixel sprite
-#define LOG_NEEDLE_SIZE 5               // 2^5 = 32 (round up to power of 2)
 
 #define NEEDLE_CENTER_X 292
 #define NEEDLE_CENTER_Y 29
@@ -420,35 +390,10 @@ FpF16<7> halfH(h / 2);
 uint8_t keystates[KEYBOARD_BYTES] = {0};
 #define key(code) (keystates[code >> 3] & (1 << (code & 7)))
 
-void load_custom_palette() {
-    RIA.addr0 = PALETTE_XRAM_ADDR;
-    RIA.step0 = 1;
-    for (int i = 0; i < 256; i++) {
-        uint16_t color = custom_palette[i];
-        RIA.rw0 = (uint8_t)(color & 0xFF); 
-        RIA.rw0 = (uint8_t)(color >> 8);   
-    }
-    set_canvas_palette(PALETTE_XRAM_ADDR);
-}
-
 inline FpF16<7> fp_abs(FpF16<7> value) {
     if (value.GetRawVal() < 0) return -value;
     return value;
 } 
-
-inline FpF16<7> floorFixed(FpF16<7> a) {
-    int16_t rawVal = a.GetRawVal();
-    if (rawVal >= 0) {
-        return FpF16<7>::FromRaw(rawVal & 0xFF80); 
-    }
-    else {
-        int16_t resultRaw = (rawVal & 0xFF80);
-        if (rawVal & 0x007F) { 
-            resultRaw -= (1 << 7); 
-        }
-        return FpF16<7>::FromRaw(resultRaw);
-    }
-}
 
 uint8_t mapValue(uint8_t value, uint8_t in_min, uint8_t in_max, uint8_t out_min, uint8_t out_max) {
     return out_min + ((value - in_min) * (out_max - out_min)) / (in_max - in_min);
@@ -564,27 +509,6 @@ static inline int16_t mulFrac7Fast(int16_t value, uint8_t frac7) {
     return (int16_t)(((int32_t)value * frac7) >> 7);
 }
 
-static uint16_t isqrt16(uint16_t value) {
-    uint16_t result = 0;
-    uint16_t bit = 1u << 14;
-
-    while (bit > value) {
-        bit >>= 2;
-    }
-
-    while (bit != 0) {
-        if (value >= result + bit) {
-            value -= result + bit;
-            result = (result >> 1) + bit;
-        } else {
-            result >>= 1;
-        }
-        bit >>= 2;
-    }
-
-    return result;
-}
-
 static void buildWallTexAverages() {
     for (uint8_t texNum = 0; texNum < NUM_TEXTURES; texNum++) {
         uint16_t sum = 0;
@@ -610,46 +534,41 @@ static inline uint8_t shadeColorDistance(uint8_t baseColor, int16_t rawDist, uin
 
 // Each buffer pixel is read from a constant address indexed by the row, so a
 // pixel costs one indexed load and one store. RWD writes it doubled to the two
-// screen rows addr0 and addr1 name; RWH (interlaced) writes addr0 only. This
-// is assembly because the compiler turns the constant addresses into pointers.
+// screen rows addr0 and addr1 name. This is assembly because the compiler
+// turns the constant addresses into pointers.
 static_assert(WINDOW_WIDTH == 120, "blit is unrolled for 120 columns");
 
 #define BLIT_STR_(x) #x
 #define BLIT_STR(x) BLIT_STR_(x)
-#define BLIT_PX(reg, k) "ldx buffer+(" #k ")*" BLIT_STR(BUF_STRIDE) ",y\n\tstx " reg "\n\t"
-#define BLIT_8(reg, k) \
-    BLIT_PX(reg, k) BLIT_PX(reg, k + 1) BLIT_PX(reg, k + 2) BLIT_PX(reg, k + 3) \
-    BLIT_PX(reg, k + 4) BLIT_PX(reg, k + 5) BLIT_PX(reg, k + 6) BLIT_PX(reg, k + 7)
-#define BLIT_8_COARSE(reg, k) \
-    BLIT_PX(reg, k) BLIT_PX(reg, k + 2) BLIT_PX(reg, k + 4) BLIT_PX(reg, k + 6)
+#define BLIT_PX(k) "ldx buffer+(" #k ")*" BLIT_STR(BUF_STRIDE) ",y\n\tstx $FFEE\n\t"
+#define BLIT_8(k) \
+    BLIT_PX(k) BLIT_PX(k + 1) BLIT_PX(k + 2) BLIT_PX(k + 3) \
+    BLIT_PX(k + 4) BLIT_PX(k + 5) BLIT_PX(k + 6) BLIT_PX(k + 7)
+#define BLIT_8_COARSE(k) \
+    BLIT_PX(k) BLIT_PX(k + 2) BLIT_PX(k + 4) BLIT_PX(k + 6)
 #define BLIT_ASM(body, row) asm volatile(body : : "y"(row) : "x", "memory")
 
-#define BLIT_ROW(reg) \
-    BLIT_8(reg, 0) BLIT_8(reg, 8) BLIT_8(reg, 16) BLIT_8(reg, 24) BLIT_8(reg, 32) \
-    BLIT_8(reg, 40) BLIT_8(reg, 48) BLIT_8(reg, 56) BLIT_8(reg, 64) BLIT_8(reg, 72) \
-    BLIT_8(reg, 80) BLIT_8(reg, 88) BLIT_8(reg, 96) BLIT_8(reg, 104) BLIT_8(reg, 112)
-#define BLIT_ROW_COARSE(reg) \
-    BLIT_8_COARSE(reg, 0) BLIT_8_COARSE(reg, 8) BLIT_8_COARSE(reg, 16) \
-    BLIT_8_COARSE(reg, 24) BLIT_8_COARSE(reg, 32) BLIT_8_COARSE(reg, 40) \
-    BLIT_8_COARSE(reg, 48) BLIT_8_COARSE(reg, 56) BLIT_8_COARSE(reg, 64) \
-    BLIT_8_COARSE(reg, 72) BLIT_8_COARSE(reg, 80) BLIT_8_COARSE(reg, 88) \
-    BLIT_8_COARSE(reg, 96) BLIT_8_COARSE(reg, 104) BLIT_8_COARSE(reg, 112)
+#define BLIT_ROW \
+    BLIT_8(0) BLIT_8(8) BLIT_8(16) BLIT_8(24) BLIT_8(32) BLIT_8(40) BLIT_8(48) \
+    BLIT_8(56) BLIT_8(64) BLIT_8(72) BLIT_8(80) BLIT_8(88) BLIT_8(96) BLIT_8(104) \
+    BLIT_8(112)
+#define BLIT_ROW_COARSE \
+    BLIT_8_COARSE(0) BLIT_8_COARSE(8) BLIT_8_COARSE(16) BLIT_8_COARSE(24) \
+    BLIT_8_COARSE(32) BLIT_8_COARSE(40) BLIT_8_COARSE(48) BLIT_8_COARSE(56) \
+    BLIT_8_COARSE(64) BLIT_8_COARSE(72) BLIT_8_COARSE(80) BLIT_8_COARSE(88) \
+    BLIT_8_COARSE(96) BLIT_8_COARSE(104) BLIT_8_COARSE(112)
 
-template <bool DUAL>
-static void blitBuffer(uint16_t screen_addr) {
+// While moving only the even columns are shown, each four pixels wide.
+static void blitBuffer() {
     const bool coarseX = (currentStep >= 2);
+    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
     RIA.step0 = coarseX ? 4 : 2;
 
     for (uint8_t j = 0; j < h; ++j) {
         RIA.addr0 = screen_addr;
-        if (DUAL) {
-            RIA.addr1 = screen_addr + SCREEN_WIDTH;
-            if (coarseX) BLIT_ASM(BLIT_ROW_COARSE("$FFEE"), j);
-            else BLIT_ASM(BLIT_ROW("$FFEE"), j);
-        } else {
-            if (coarseX) BLIT_ASM(BLIT_ROW_COARSE("$FFED"), j);
-            else BLIT_ASM(BLIT_ROW("$FFED"), j);
-        }
+        RIA.addr1 = screen_addr + SCREEN_WIDTH;
+        if (coarseX) BLIT_ASM(BLIT_ROW_COARSE, j);
+        else BLIT_ASM(BLIT_ROW, j);
         screen_addr += (SCREEN_WIDTH * 2);
     }
 }
@@ -662,42 +581,6 @@ static void blitBuffer(uint16_t screen_addr) {
 #undef BLIT_PX
 #undef BLIT_STR
 #undef BLIT_STR_
-
-void drawBufferDouble_Optimized() {
-    blitBuffer<true>(SCREEN_WIDTH * yOffset + xOffset);
-}
-
-void drawBufferDouble_Optimized_Interlaced(bool oddField) {
-    blitBuffer<false>(SCREEN_WIDTH * (yOffset + (oddField ? 1 : 0)) + xOffset);
-}
-
-void fillBuffer(uint8_t color) {
-    uint16_t screen_addr = SCREEN_WIDTH * yOffset + xOffset;
-    uint8_t* buffer_ptr_loc = buffer;
-
-    for (uint8_t j = 0; j < h; ++j) {
-        RIA.addr0 = screen_addr;
-        RIA.step0 = 1;
-        RIA.addr1 = screen_addr + SCREEN_WIDTH;
-        RIA.step1 = 1;
-        uint8_t* p = buffer_ptr_loc;
-        // Unroll 8 pixels per block (width must be multiple of 8)
-        const uint8_t blocks = w >> 3;
-        for (uint8_t i = 0; i < blocks; ++i) {
-            #define PUSH_PIXEL \
-                { \
-                    uint8_t c = color; \
-                    RIA.rw0 = c; RIA.rw0 = c; \
-                    RIA.rw1 = c; RIA.rw1 = c; \
-                }
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL; PUSH_PIXEL;
-            #undef PUSH_PIXEL
-        }
-        screen_addr += (SCREEN_WIDTH * 2);
-        buffer_ptr_loc += w; 
-    }
-}
 
 static void draw_7segment_digit(uint16_t color, int8_t digit, uint16_t x, uint16_t y) {
     static const uint8_t segments[] = {
@@ -735,7 +618,6 @@ void precalculateRotations() {
     FpF16<7> currentPlaneX = planeX;
     FpF16<7> currentPlaneY = planeY;
 
-    invW = FpF16<7>(1) / FpF16<7>(w); 
     FpF16<7> fw = FpF16<7>(w);
     
     texStepValues[0] = FpF16<7>(texHeight * texRepeat); 
@@ -1200,7 +1082,7 @@ static void drawColumn(uint8_t* col, const WallColumn& wc, bool coarse) {
     }
 }
 
-int raycastF() {
+void raycastF() {
     uint16_t raycastStartClock = ria_call_int(RIA_OP_CLOCK);
 
     const bool coarse = (currentStep >= 2);
@@ -1219,8 +1101,9 @@ int raycastF() {
     const uint8_t fracY = (uint8_t)(posYRaw & 0x7F);
     const uint8_t invFracY = (uint8_t)(128 - fracY);
 
-    const int mapX_start = posXRaw >> 7;
-    const int mapY_start = posYRaw >> 7;
+    // Flattened 8-bit map index of the player's cell
+    static_assert(mapWidth == 16 && mapHeight == 16, "map index is (y << 4) + x");
+    const uint8_t mapOffsetStart = (uint8_t)(((posYRaw >> 7) << 4) + (posXRaw >> 7));
     int8_t* mapPtr = (int8_t*)worldMap;
 
     uint8_t lastTexNum = 0xFF;
@@ -1243,11 +1126,7 @@ int raycastF() {
         if (negX) rDX = -rDX;
         if (negY) rDY = -rDY;
 
-        zp_mapX = mapX_start;
-        zp_mapY = mapY_start;
-
-        // Flattened map access optimization (mapWidth=16)
-        uint8_t mapOffset = (zp_mapY << 4) + zp_mapX;
+        uint8_t mapOffset = mapOffsetStart;
         int8_t mapStepX = (rDX < 0) ? -1 : 1;
         int8_t mapStepY = (rDY < 0) ? -16 : 16;
         if (rDX < 0) {
@@ -1349,15 +1228,9 @@ int raycastF() {
     renderSprites();
 
     uint16_t blitStartClock = ria_call_int(RIA_OP_CLOCK);
-    if (interlacedMode) {
-        drawBufferDouble_Optimized_Interlaced(false);
-    } else {
-        drawBufferDouble_Optimized();
-    }
+    blitBuffer();
     uint16_t blitEndClock = ria_call_int(RIA_OP_CLOCK);
     profileBlitTicks = (uint8_t)(blitEndClock - blitStartClock);
-
-    return 0;
 }
 
 void draw_ui() {
@@ -1485,8 +1358,6 @@ void draw_player(bool drawHud){
     if (drawHud) {
         draw_7segment_double(GREEN, (int16_t)(fps), 270, 68);
         draw_7segment_double(GREEN, (int16_t)(coarseSidePercent), 295, 68);
-        // draw_7segment_double(GREEN, (int16_t)(profileRaycastTicks), 270, 80);
-        // draw_7segment_double(GREEN, (int16_t)(profileBlitTicks), 295, 80);
     }
     prevPlayerX = x;
     prevPlayerY = y;
@@ -1494,7 +1365,6 @@ void draw_player(bool drawHud){
 }
 
 void handleCalculation() {
-    gamestate = GAMESTATE_CALCULATING;
     if (overlayUpdatesEnabled && needleNeedsUpdate) {
         draw_needle();
         needleNeedsUpdate = false;
@@ -1629,7 +1499,7 @@ static void runBench() {
     benchLine("moving", 2);
     currentStep = 1;
     uint16_t t0 = ria_call_int(RIA_OP_CLOCK);
-    for (uint8_t i = 0; i < 100; i++) drawBufferDouble_Optimized();
+    for (uint8_t i = 0; i < 100; i++) blitBuffer();
     uint16_t t1 = ria_call_int(RIA_OP_CLOCK);
     for (uint8_t i = 0; i < 100; i++) renderSprites();
     uint16_t t2 = ria_call_int(RIA_OP_CLOCK);
@@ -1638,20 +1508,15 @@ static void runBench() {
 #endif
 
 int16_t main() {
-    bool paused = false;
     uint8_t timer = 0;
-    bool movingFrame = false;
     bool scan_key_latch = false;
     bool q_key_latch = false;
     bool e_key_latch = false;
-    bool m_key_latch = false;
     bool f_key_latch = false;
     bool g_key_latch = false;
 
     prevPlayerX = (int)(posX * FpF16<7>(TILE_SIZE));
     prevPlayerY = (int)(posY * FpF16<7>(TILE_SIZE));
-
-    gamestate = GAMESTATE_INIT;
 
     initializeMaze();
 
@@ -1665,8 +1530,6 @@ int16_t main() {
     posX = FpF16<7>(startPosX);
     posY = FpF16<7>(startPoxY);
 
-    // print_map();
-
     placeSprites();
 
     buildSquareTables();
@@ -1678,7 +1541,7 @@ int16_t main() {
     currentRotStep = 15;
     updateRaycasterVectors(); 
 
-    init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT, 8);
+    init_bitmap_graphics(0xFF00, 0x0000, 0, 2, SCREEN_WIDTH, SCREEN_HEIGHT);
     RIA.addr0 = PALETTE_XRAM_ADDR;
     RIA.step0 = 1;
     for (int i = 0; i < 256; i++) {
@@ -1689,16 +1552,12 @@ int16_t main() {
 
     xram0_struct_set(0xFF00, vga_mode3_config_t, xram_palette_ptr, PALETTE_XRAM_ADDR);
 
-    uint16_t clock = ria_call_int(RIA_OP_CLOCK);
-    uint16_t last_fps_clock = clock;
-
     draw_ui();
     init_needle_sprite();
 #ifdef RAYCAST_SHOT
-    // RAYCAST_SHOT bits: 0 moving quality, 1 interlaced; RAYCAST_SHOT_ROT
+    // RAYCAST_SHOT is the quality step (1 idle, 2 moving); RAYCAST_SHOT_ROT
     // picks the view.
-    currentStep = ((RAYCAST_SHOT) & 1) + 1;
-    interlacedMode = ((RAYCAST_SHOT) >> 1) & 1;
+    currentStep = RAYCAST_SHOT;
     currentRotStep = RAYCAST_SHOT_ROT;
     updateRaycasterVectors();
     raycastF();
@@ -1782,16 +1641,6 @@ int16_t main() {
                     if(worldMap[int(posY)][int(posX + (strafeX * moveSpeed) * playerScale)] == false) posX += (strafeX * moveSpeed);
                     if(worldMap[int(posY + (strafeY * moveSpeed) * playerScale)][int(posX)] == false) posY += (strafeY * moveSpeed);
                 }
-                bool m_down = key(KEY_M);
-                if (m_down && !m_key_latch) {
-                    interlacedMode = !interlacedMode;
-                    if (interlacedMode) {
-                        fillBuffer(BLACK);
-                    }
-                    draw_ui();
-                }
-                m_key_latch = m_down;
-
                 bool f_down = key(KEY_F);
                 if (f_down && !f_key_latch) {
                     overlayUpdatesEnabled = !overlayUpdatesEnabled;
@@ -1837,10 +1686,8 @@ int16_t main() {
             }
 
         }
-        if (!paused && !scan_active) {
-            movingFrame = false;
+        if (!scan_active) {
             if (gamestate == GAMESTATE_MOVING) {
-                movingFrame = true;
                 currentStep = movementStep;
                 timer = 0;
             } else {
@@ -1854,12 +1701,8 @@ int16_t main() {
 
         if (overlayUpdatesEnabled) {
             map_visible = true;
-            // if (movingFrame) {
-            //     draw_player(false);
-            // } else {
-                draw_map();
-                draw_player(true);
-            // }
+            draw_map();
+            draw_player(true);
         } else {
             map_visible = false;
             prevPlayerDotValid = false;
@@ -1872,10 +1715,9 @@ int16_t main() {
                     }
                 }
             }
-                for (uint8_t i = 0; i < numSprites; i++) {
-                    if (sprite_scan_decay[i] > 0) {
-                        sprite_scan_decay[i]--;
-                    }
+            for (uint8_t i = 0; i < numSprites; i++) {
+                if (sprite_scan_decay[i] > 0) {
+                    sprite_scan_decay[i]--;
                 }
             }
 
@@ -1885,6 +1727,7 @@ int16_t main() {
             } else {
                 scan_frame++;
             }
+        }
 
         uint16_t frame_end_clock = ria_call_int(RIA_OP_CLOCK);
         uint16_t frame_ticks = frame_end_clock - frame_start_clock;
@@ -1892,9 +1735,6 @@ int16_t main() {
             fps = (uint8_t)(CLOCK_TICKS_PER_SEC / frame_ticks);
         } else {
             fps = CLOCK_TICKS_PER_SEC;
-        }
-        if ((uint16_t)(frame_end_clock - last_fps_clock) >= CLOCK_TICKS_PER_SEC) {
-            last_fps_clock = frame_end_clock;
         }
     }
     return 0;

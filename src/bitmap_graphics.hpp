@@ -11,56 +11,28 @@
 //
 // There doesn't seem to be a copyright or a license associated with his code.
 // I don't care what you do with my version either -- have fun!
+//
+// Trimmed to the 8bpp primitives this demo uses.
 // ---------------------------------------------------------------------------
 
 #ifndef BITMAP_GRAPHICS_H
 #define BITMAP_GRAPHICS_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
-#define swap(a, b) { int16_t t = a; a = b; b = t; }
-
-// For writing text
-#define TABSPACE 4 // number of spaces for a tab
-
-// For accessing the font library
-#define pgm_read_byte(addr) (*(const unsigned char *)(addr))
-
-void set_canvas_palette(uint16_t palette_xram_address);
-
+// Sets up an 8bpp mode 3 bitmap canvas.
 void init_bitmap_graphics(uint16_t canvas_struct_address,
                           uint16_t canvas_data_address,
                           uint8_t  canvas_plane,
-                          uint8_t  canvas_type,
+                          uint8_t  canvas_mode,
                           uint16_t canvas_width,
-                          uint16_t canvas_height,
-                          uint8_t  bits_per_pixel);
-uint16_t canvas_width(void);
-uint16_t canvas_height(void);
-uint8_t bits_per_pixel(void);
+                          uint16_t canvas_height);
 
 uint16_t random(uint16_t low_limit, uint16_t high_limit);
 
-void erase_canvas(void);
-void draw_pixel(uint16_t color, uint16_t x, uint16_t y);
-void draw_vline(uint16_t color, uint16_t x, uint16_t y, uint16_t h);
-void draw_hline(uint16_t color, uint16_t x, uint16_t y, uint16_t w);
-void draw_line(uint16_t color, int16_t x0, int16_t y0, int16_t x1, int16_t y1);
-void draw_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-void fill_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-void fill_rect_fast(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-void draw_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r);
-void fill_circle(uint16_t color, uint16_t x0, uint16_t y0, uint16_t r);
-void draw_rounded_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r);
-void fill_rounded_rect(uint16_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r);
-
-void set_cursor(uint16_t x, uint16_t y);
-void set_text_multiplier(uint8_t mult);
-void set_text_color(uint16_t color); // transparent background
-void set_text_colors(uint16_t color, uint16_t background);
-void set_text_wrap(bool w);
-void draw_char(char chr, uint16_t x, uint16_t y);
-void draw_string(char * str);
+void draw_pixel(uint8_t color, uint16_t x, uint16_t y);
+void draw_vline(uint8_t color, uint16_t x, uint16_t y, uint16_t h);
+void draw_hline(uint8_t color, uint16_t x, uint16_t y, uint16_t w);
+void fill_rect_fast(uint8_t color, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
 #endif // BITMAP_GRAPHICS_H
