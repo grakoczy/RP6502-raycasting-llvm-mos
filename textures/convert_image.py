@@ -5,7 +5,7 @@ import re
 import os
 
 def load_palette():
-    """Reads palette.h and returns only the 'Image Zone' (indices 64-255)"""
+    """Reads palette.h and returns all 256 entries as RGB888"""
     palette = []
     if not os.path.exists("palette.h"):
         print("Error: palette.h not found. Generate it first!")
@@ -21,12 +21,11 @@ def load_palette():
             g = ((val >> 6) & 0x1F) << 3
             b = ((val >> 11) & 0x1F) << 3
             palette.append((r, g, b))
-    
-    # We skip ANSI (16), Sky (16), and Floor (32) = 64 total
-    return np.array(palette[64:]) 
+
+    return np.array(palette)
 
 def conv_image(name_in, size_x, size_y, name_out):
-    """Converts image to 8-bit indexed binary using the custom palette zone (64-255)"""
+    """Converts image to 8-bit indexed binary using the whole palette"""
     img_palette = load_palette()
     
     print(f"Converting {name_in} to {name_out} ({size_x}x{size_y})...")
@@ -40,11 +39,9 @@ def conv_image(name_in, size_x, size_y, name_out):
                 for x in range(im2.width):
                     r, g, b = im2.getpixel((x, y))
                     
-                    # Find the closest color in the 192 colors we reserved for images
+                    # Closest palette entry; argmin is the palette index itself
                     distances = np.sqrt(np.sum((img_palette - [r, g, b])**2, axis=1))
-                    
-                    # Argmin gives index 0-191. We add 64 to map it to palette indices 64-255
-                    color_index = np.argmin(distances) + 64
+                    color_index = np.argmin(distances)
                     
                     o.write(int(color_index).to_bytes(1, 'little'))
     print("Done.")

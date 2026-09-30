@@ -110,7 +110,7 @@ def generate_header_constants(output_file, texture_size, num_textures):
     header_content += f"#define spriteHeight {height}\n"
     header_content += f"#define NUM_SPRITES {num_textures}\n\n"
     header_content += f"// Sprite base address in XRAM (set this in CMakeLists.txt)\n"
-    header_content += f"#define SPRITE_BASE 0x1E700\n\n"
+    header_content += f"#define SPRITE_BASE 0x1FB20\n\n"
     header_content += f"#define SPRITE_HAS_OPACITY_METADATA 1\n"
     header_content += f"#define SPRITE_BYTES_PER_SPRITE (spriteWidth * spriteHeight)\n"
     header_content += f"#define SPRITE_OPACITY_MASK_BYTES_PER_SPRITE (spriteWidth * 2)\n"
@@ -189,7 +189,7 @@ def main():
     print("Next steps:")
     print("="*60)
     print("1. Update CMakeLists.txt:")
-    print("   rp6502_asset(raycast 0x1E500 sprites.bin)")
+    print("   rp6502_asset(raycast 0x1FB20 sprites.bin)")
     print("   rp6502_executable(raycast sprites.bin.rp6502 ...)")
     print("="*60)
 

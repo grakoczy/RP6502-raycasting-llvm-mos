@@ -76,7 +76,10 @@ uint8_t profileRaycastTicks = 0;
 uint8_t profileBlitTicks = 0;
 
 // Texture repeat factor: 1=no repeat, 2=repeat 2x, 4=repeat 4x
-const uint8_t texRepeat = 4;
+const uint8_t texRepeat = 2;
+// Wall texture steps, the tall-wall offset table and sprite stepping all
+// assume 64 texels per wall height.
+static_assert(texHeight * texRepeat == 64, "texel scale is fixed at 64 per wall");
 
 // Column-major: a column is contiguous so the renderer walks it with an 8-bit
 // index, and the blit reads each row at constant addresses.
@@ -185,12 +188,12 @@ static inline void fillCol(uint8_t* col, uint8_t y0, uint8_t y1, uint8_t c) {
     "sta zpa_tpl\n\t" \
     "txa\n\t" \
     "adc zpa_sth\n\t" \
-    "and #15\n\t" \
+    "and #31\n\t" \
     "tax\n\t"
 
 template <bool DUAL>
 static inline void texCol(uint8_t* col, uint8_t y0, uint8_t y1, uint16_t tp, uint16_t step) {
-    static_assert(texHeight == 16, "texel mask is hardcoded");
+    static_assert(texHeight == 32, "texel mask is hardcoded");
     if (y0 >= y1) return;
     zpa_col = col;
     if (DUAL) zpa_col2 = col + 2 * BUF_STRIDE;
@@ -338,7 +341,7 @@ FpF16<7> invDetCache;
 bool invDetValid = false;
 
 int16_t texOffsetTable[256]; 
-__attribute__((used)) uint8_t texColumnBuffer[16];
+__attribute__((used)) uint8_t texColumnBuffer[texHeight];
 __attribute__((used)) uint8_t sprColumnBuffer[16]; // Buffer for sprite column data
 __attribute__((used)) uint8_t sprOpaque[16];
 uint8_t wallTexAvgColor[NUM_TEXTURES];
@@ -511,13 +514,13 @@ static inline int16_t mulFrac7Fast(int16_t value, uint8_t frac7) {
 
 static void buildWallTexAverages() {
     for (uint8_t texNum = 0; texNum < NUM_TEXTURES; texNum++) {
-        uint16_t sum = 0;
+        uint32_t sum = 0;
         for (uint8_t texX = 0; texX < texWidth; texX++) {
             for (uint8_t texY = 0; texY < texHeight; texY++) {
-                sum += getTexturePixel(texNum, ((uint16_t)texY << 4) + texX);
+                sum += getTexturePixel(texNum, TEX_OFFSET(texX, texY));
             }
         }
-        wallTexAvgColor[texNum] = (uint8_t)(sum >> 8);
+        wallTexAvgColor[texNum] = (uint8_t)(sum / (texWidth * texHeight));
     }
 }
 
@@ -1194,7 +1197,7 @@ void raycastF() {
                 wallHitRaw(posXRaw, rawDist, rDX);
             // Extract 7-bit fractional part, scale by texRepeat*texWidth=64 (<<6), then >>7 = >>1
             uint8_t frac7 = wallRaw & 0x7F;
-            uint8_t texX = (frac7 >> 1) & 0x0F;
+            uint8_t texX = (frac7 >> 1) & (texWidth - 1);
             if (zp_side == 0 && rDX > 0) texX = texWidth - texX - 1;
             if (zp_side == 1 && rDY < 0) texX = texWidth - texX - 1;
 

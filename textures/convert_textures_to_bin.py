@@ -5,16 +5,10 @@ import re
 
 # Your predefined list of image files
 image_files = [
-    # "greystone16x16.png",
-    # "greystone16x16dark.png",
-    "concrete_16x16.png",
-    "concrete_16x16dark.png",
-    # "greystone16x16.png",
-    # "greystone16x16dark.png",
-    "redbrick_16x16.png",
-    "redbrick_16x16dark.png",
-    # "floor_16x16.png",
-    # "ceiling_16x16.png"
+    "greystone32x32.png",
+    "greystone32x32dark.png",
+    "redbrick32x32.png",
+    "redbrick32x32dark.png",
 ]
 
 def load_palette_from_h(filename="palette.h"):
@@ -94,34 +88,23 @@ def generate_header_constants(output_file, texture_size, num_textures):
     header_content += f"#define NUM_TEXTURES {num_textures}\n\n"
     header_content += f"// Texture base address in XRAM (set this in CMakeLists.txt)\n"
     header_content += f"#define TEXTURE_BASE 0x1E100\n\n"
+    texel_shift = (width * height).bit_length() - 1
+    column_shift = width.bit_length() - 1
     header_content += f"// Helper function to get texture pixel\n"
     header_content += f"inline uint8_t getTexturePixel(uint8_t texNum, uint16_t offset) {{\n"
-    # header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 10) + offset;\n"
-    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 8) + offset;\n"
+    header_content += f"    RIA.addr0 = TEXTURE_BASE + ((uint16_t)texNum << {texel_shift}) + offset;\n"
     header_content += f"    RIA.step0 = 0;\n"
     header_content += f"    return RIA.rw0;\n"
     header_content += f"}}\n\n"
+    header_content += f"// Row y of texture column x is at offset (y << {column_shift}) + x\n"
+    header_content += f"#define TEX_OFFSET(x, y) (((uint16_t)(y) << {column_shift}) + (x))\n\n"
     header_content += f"// Optimized function to fetch entire texture column\n"
     header_content += f"extern uint8_t texColumnBuffer[{height}];\n"
     header_content += f"inline void fetchTextureColumn(uint8_t texNum, uint8_t texX) {{\n"
-    header_content += f"    RIA.addr0 = TEXTURE_BASE + (texNum << 8) + texX;\n"
-    header_content += f"    RIA.step0 = 16;\n"
-    header_content += f"    texColumnBuffer[0]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[1]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[2]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[3]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[4]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[5]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[6]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[7]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[8]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[9]  = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[10] = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[11] = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[12] = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[13] = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[14] = RIA.rw0;\n"
-    header_content += f"    texColumnBuffer[15] = RIA.rw0;\n"
+    header_content += f"    RIA.addr0 = TEXTURE_BASE + ((uint16_t)texNum << {texel_shift}) + texX;\n"
+    header_content += f"    RIA.step0 = {width};\n"
+    for y in range(height):
+        header_content += f"    texColumnBuffer[{y}] = RIA.rw0;\n"
     header_content += f"}}\n\n"
     header_content += f"#endif // TEXTURE_DATA_H\n"
     
@@ -134,7 +117,7 @@ def main():
     # Define the output binary file name
     output_binary = "textures.bin"
     output_header = "textures.h"
-    texture_size = (16, 16)  # Define a fixed texture size (16x16)
+    texture_size = (32, 32)
 
     # Generate textures from the predefined list of images
     textures = []
